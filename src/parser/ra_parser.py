@@ -22,7 +22,7 @@ class RAParser:
     """
 
     RECORD_TYPE = "RA"
-    RECORD_LENGTH = 856
+    RECORD_LENGTH = 1272
 
     def __init__(self):
         self.logger = get_logger(__name__)
@@ -210,41 +210,53 @@ class RAParser:
             # 51. ダート馬場状態コード (位置:762, 長さ:1)
             result["DirtBabaCD"] = self.decode_field(data[761:762])
 
-            # 52. ラップタイム (位置:763, 長さ:3)
-            result["LapTime"] = self.decode_field(data[762:765])
+            # 52. ラップタイム (位置:763, 長さ:3×25=75)
+            lap_parts = []
+            for i in range(25):
+                chunk = self.decode_field(data[762 + i * 3: 762 + i * 3 + 3])
+                if not chunk:
+                    break
+                try:
+                    val = int(chunk)
+                    if val == 0:
+                        break
+                    lap_parts.append(f"{val / 10:.1f}")
+                except ValueError:
+                    break
+            result["LapTime"] = "-".join(lap_parts)
 
-            # 53. 障害マイルタイム (位置:766, 長さ:4)
-            result["SyogaiMileTime"] = self.decode_field(data[765:769])
+            # 53. 障害マイルタイム (位置:838, 長さ:4)
+            result["SyogaiMileTime"] = self.decode_field(data[837:841])
 
-            # 54. 前3ハロン (位置:770, 長さ:3)
-            result["Haron3F"] = self.decode_field(data[769:772])
+            # 54. 前3ハロン (位置:842, 長さ:3)
+            result["Haron3F"] = self.decode_field(data[841:844])
 
-            # 55. 前4ハロン (位置:773, 長さ:3)
-            result["Haron4F"] = self.decode_field(data[772:775])
+            # 55. 前4ハロン (位置:845, 長さ:3)
+            result["Haron4F"] = self.decode_field(data[844:847])
 
-            # 56. 後3ハロン (位置:776, 長さ:3)
-            result["Haron3L"] = self.decode_field(data[775:778])
+            # 56. 後3ハロン (位置:848, 長さ:3)
+            result["Haron3L"] = self.decode_field(data[847:850])
 
-            # 57. 後4ハロン (位置:779, 長さ:3)
-            result["Haron4L"] = self.decode_field(data[778:781])
+            # 57. 後4ハロン (位置:851, 長さ:3)
+            result["Haron4L"] = self.decode_field(data[850:853])
 
-            # 58. <コーナー通過順位> (位置:782, 長さ:0)
+            # 58. <コーナー通過順位> (位置:854, 長さ:0)
             # Note: This is a section header with 0 length, not an actual field
 
-            # 59. 　　コーナー (位置:782, 長さ:1)
-            result["Corner"] = self.decode_field(data[781:782])
+            # 59. 　　コーナー (位置:854, 長さ:1)
+            result["Corner"] = self.decode_field(data[853:854])
 
-            # 60. 　　周回数 (位置:783, 長さ:1)
-            result["Syukaisu"] = self.decode_field(data[782:783])
+            # 60. 　　周回数 (位置:855, 長さ:1)
+            result["Syukaisu"] = self.decode_field(data[854:855])
 
-            # 61. 　　各通過順位 (位置:784, 長さ:70)
-            result["TsukaJyuni"] = self.decode_field(data[783:853])
+            # 61. 　　各通過順位 (位置:856, 長さ:70)
+            result["TsukaJyuni"] = self.decode_field(data[855:925])
 
-            # 62. レコード更新区分 (位置:854, 長さ:1)
-            result["RecordUpKubun"] = self.decode_field(data[853:854])
+            # 62. レコード更新区分 (位置:926, 長さ:1)
+            result["RecordUpKubun"] = self.decode_field(data[925:926])
 
-            # 63. レコード区切 (位置:855, 長さ:2)
-            result["Crlf"] = self.decode_field(data[854:856])
+            # 63. レコード区切 (位置:927, 長さ:2)
+            result["Crlf"] = self.decode_field(data[926:928])
 
             return result
 
