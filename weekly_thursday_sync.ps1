@@ -1,0 +1,246 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    JRA-VAN Weekly Differential Data Auto-Sync
+.DESCRIPTION
+    Fetches differential data from JRA-VAN and stores it in PostgreSQL.
+    Intended to run every Thursday at 23:00 via Task Scheduler.
+.NOTES
+    Connection : localhost:5432/keiba (user: postgres)
+    Python     : py -3.12-32
+    Password   : read from HKCU\Environment (User) via [Environment]::GetEnvironmentVariable,
+                 with fallback to session $env:PGPASSWORD for manual runs
+#>
+
+$ErrorActionPreference = "Stop"
+
+$root   = Split-Path -Parent $MyInvocation.MyCommand.Path
+$logDir = Join-Path $root "logs"
+
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$logFile   = Join-Path $logDir "weekly_sync_$timestamp.log"
+
+# UTF-8 without BOM encoder (PowerShell 5.1 Add-Content -Encoding UTF8 adds BOM)
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+
+function Write-Log {
+    param([string]$Message, [string]$Level = "INFO")
+    $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Level, $Message
+    Write-Host $line
+    [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+}
+
+# Log rotation: delete oldest files when count exceeds 30
+Get-ChildItem -Path $logDir -Filter "weekly_sync_*.log" |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -Skip 30 |
+    ForEach-Object { Remove-Item $_.FullName -Force }
+
+Write-Log "=== JRA-VAN weekly diff sync START ==="
+
+# Read PGPASSWORD from User environment (HKCU\Environment) directly so Task Scheduler
+# picks it up regardless of when the variable was set relative to process launch.
+# Fall back to the session variable for interactive/manual runs.
+$pgPassword = [Environment]::GetEnvironmentVariable('PGPASSWORD', 'User')
+if ([string]::IsNullOrEmpty($pgPassword)) {
+    $pgPassword = $env:PGPASSWORD
+}
+if ([string]::IsNullOrEmpty($pgPassword)) {
+    Write-Log "PGPASSWORD is not set in User environment (HKCU\Environment) or the current session. Run register_weekly_thursday_task.ps1 to configure it." "ERROR"
+    exit 1
+}
+
+# Set PostgreSQL connection environment variables
+$env:POSTGRES_HOST     = "localhost"
+$env:POSTGRES_PORT     = "5432"
+$env:POSTGRES_DATABASE = "keiba"
+$env:POSTGRES_USER     = "postgres"
+$env:POSTGRES_PASSWORD = $pgPassword
+$env:PYTHONIOENCODING  = "utf-8"
+
+Write-Log "Connection: $($env:POSTGRES_HOST):$($env:POSTGRES_PORT)/$($env:POSTGRES_DATABASE)  user: $($env:POSTGRES_USER)"
+
+# Verify py -3.12-32 is available
+try {
+    $pyVer = & py "-3.12-32" "--version" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "non-zero exit" }
+    Write-Log "Python: $pyVer"
+} catch {
+    Write-Log "py -3.12-32 not found. JV-Link requires 32-bit Python 3.12." "ERROR"
+    exit 1
+}
+
+# Date range: 8 days back to tomorrow, to reliably cover since the last Thursday run
+$fromDate = (Get-Date).AddDays(-8).ToString("yyyyMMdd")
+$toDate   = (Get-Date).AddDays(1).ToString("yyyyMMdd")
+Write-Log "Diff date range: $fromDate - $toDate"
+
+$quickstart = Join-Path $root "scripts\quickstart.py"
+if (-not (Test-Path $quickstart)) {
+    Write-Log "scripts\quickstart.py not found: $quickstart" "ERROR"
+    exit 1
+}
+
+$pyArgs = @(
+    $quickstart,
+    "--mode",        "update",
+    "--db-type",     "postgresql",
+    "--pg-host",     $env:POSTGRES_HOST,
+    "--pg-port",     $env:POSTGRES_PORT,
+    "--pg-database", $env:POSTGRES_DATABASE,
+    "--pg-user",     $env:POSTGRES_USER,
+    "--pg-password", $pgPassword,
+    "--from-date",   $fromDate,
+    "--to-date",     $toDate,
+    "--yes"
+)
+
+Write-Log "Starting sync..."
+Set-Location -Path $root
+
+# Use ErrorActionPreference = Continue around the pipeline to prevent PowerShell 5.1
+# from treating native-command stderr lines (wrapped as ErrorRecord) as terminating errors.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+
+& py "-3.12-32" @pyArgs 2>&1 | ForEach-Object {
+    $line = "[{0}] [SYNC] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+    Write-Host $line
+    [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+}
+$exitCode = $LASTEXITCODE
+
+$ErrorActionPreference = $prevEAP
+
+if ($exitCode -eq 0) {
+    Write-Log "=== Weekly diff sync COMPLETE ==="
+} else {
+    Write-Log "=== Weekly diff sync FAILED (exit code: $exitCode) ===" "ERROR"
+    exit $exitCode
+}
+
+# ============================================================
+# 気象データ同期（先週土日の全開催競馬場）
+# ============================================================
+Write-Log "=== 気象データ同期 START ==="
+
+# beautifulsoup4 がなければインストール
+$null = & py "-3.12-32" "-c" "import bs4" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Log "beautifulsoup4 を自動インストール中..."
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & py "-3.12-32" "-m" "pip" "install" "beautifulsoup4" 2>&1 | ForEach-Object {
+        $line = "[{0}] [PIP] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+        Write-Host $line
+        [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+    }
+    $ErrorActionPreference = $prevEAP
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "beautifulsoup4 インストール失敗 - 気象同期をスキップ" "WARN"
+        Write-Log "手動インストール: py -3.12-32 -m pip install beautifulsoup4" "WARN"
+        exit 0
+    }
+}
+
+$weatherScript = Join-Path $root "scripts\sync_weather.py"
+if (-not (Test-Path $weatherScript)) {
+    Write-Log "scripts\sync_weather.py が見つかりません - スキップ" "WARN"
+} else {
+    $weatherArgs = @(
+        $weatherScript,
+        "--pg-host",     $env:POSTGRES_HOST,
+        "--pg-port",     ([string]$env:POSTGRES_PORT),
+        "--pg-database", $env:POSTGRES_DATABASE,
+        "--pg-user",     $env:POSTGRES_USER,
+        "--pg-password", $pgPassword
+    )
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
+    & py "-3.12-32" @weatherArgs 2>&1 | ForEach-Object {
+        $line = "[{0}] [WEATHER] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+        Write-Host $line
+        [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+    }
+    $weatherExitCode = $LASTEXITCODE
+
+    $ErrorActionPreference = $prevEAP
+
+    if ($weatherExitCode -eq 0) {
+        Write-Log "=== 気象データ同期 COMPLETE ==="
+    } else {
+        # 気象同期の失敗はメイン同期に影響しない（WARN 扱い）
+        Write-Log "=== 気象データ同期 FAILED (exit: $weatherExitCode) - メイン同期は正常完了 ===" "WARN"
+    }
+}
+
+# ============================================================
+# 馬場指数計算（先週土日）Step 1
+# ============================================================
+Write-Log "=== 馬場指数計算 START ==="
+
+$trackSpeedScript = Join-Path $root "scripts\calc_track_speed.py"
+if (-not (Test-Path $trackSpeedScript)) {
+    Write-Log "scripts\calc_track_speed.py が見つかりません - スキップ" "WARN"
+} else {
+    # 直近の土日を計算（木曜実行基準: 土=-5日, 日=-4日）
+    $today   = Get-Date
+    $dowInt  = [int]$today.DayOfWeek   # 0=Sun … 6=Sat
+    # 直近の土曜日（当日が土曜なら先週土曜）
+    $daysToLastSat = if ($dowInt -ge 1) { $dowInt + 1 } else { 7 }
+    $lastSat = $today.AddDays(-$daysToLastSat)
+    $lastSun = $lastSat.AddDays(1)
+
+    $raceDates = @(
+        $lastSat.ToString("yyyyMMdd"),
+        $lastSun.ToString("yyyyMMdd")
+    )
+    Write-Log "[TRACK_SPEED] 対象日: $($raceDates -join ', ')"
+
+    $trackSpeedFailed = $false
+
+    foreach ($raceDate in $raceDates) {
+        Write-Log "[TRACK_SPEED] $raceDate 計算開始"
+
+        $tsArgs = @(
+            $trackSpeedScript,
+            "--date",        $raceDate,
+            "--pg-host",     $env:POSTGRES_HOST,
+            "--pg-port",     ([string]$env:POSTGRES_PORT),
+            "--pg-database", $env:POSTGRES_DATABASE,
+            "--pg-user",     $env:POSTGRES_USER,
+            "--pg-password", $pgPassword
+        )
+
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        & py "-3.12-32" @tsArgs 2>&1 | ForEach-Object {
+            $line = "[{0}] [TRACK_SPEED] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+            Write-Host $line
+            [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+        }
+        $tsExitCode = $LASTEXITCODE
+
+        $ErrorActionPreference = $prevEAP
+
+        if ($tsExitCode -eq 0) {
+            Write-Log "[TRACK_SPEED] $raceDate 計算完了"
+        } else {
+            Write-Log "[TRACK_SPEED] $raceDate 計算失敗 (exit: $tsExitCode)" "WARN"
+            $trackSpeedFailed = $true
+        }
+    }
+
+    if ($trackSpeedFailed) {
+        Write-Log "=== 馬場指数計算 一部失敗 - メイン同期は正常完了 ===" "WARN"
+    } else {
+        Write-Log "=== 馬場指数計算 COMPLETE ==="
+    }
+}
