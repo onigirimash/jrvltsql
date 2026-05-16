@@ -787,3 +787,68 @@ if (-not (Test-Path $reliabilityScript)) {
         Write-Log "=== 信頼度計算 FAILED (exit: $relExitCode) - メイン同期は正常完了 ===" "WARN"
     }
 }
+
+# ============================================================
+# 推定勝率計算（先週土日）Step 9
+# 依存: nl_horse_index.adjusted_index（Step7完了後に実行すること）
+# Softmax(adjusted_index / T) で馬別勝率を算出し nl_race_prediction へ保存
+# ============================================================
+Write-Log "=== 推定勝率計算 START ==="
+
+$winProbScript = Join-Path $root "scripts\calc_win_prob.py"
+if (-not (Test-Path $winProbScript)) {
+    Write-Log "scripts\calc_win_prob.py が見つかりません - スキップ" "WARN"
+} else {
+    $today   = Get-Date
+    $dowInt  = [int]$today.DayOfWeek
+    $daysToLastSat = if ($dowInt -ge 1) { $dowInt + 1 } else { 7 }
+    $lastSat = $today.AddDays(-$daysToLastSat)
+    $lastSun = $lastSat.AddDays(1)
+
+    $raceDates = @(
+        $lastSat.ToString("yyyyMMdd"),
+        $lastSun.ToString("yyyyMMdd")
+    )
+    Write-Log "[WIN_PROB] 対象日: $($raceDates -join ', ')"
+
+    $winProbFailed = $false
+
+    foreach ($raceDate in $raceDates) {
+        Write-Log "[WIN_PROB] $raceDate 計算開始"
+
+        $wpArgs = @(
+            $winProbScript,
+            "--date",        $raceDate,
+            "--pg-host",     $env:POSTGRES_HOST,
+            "--pg-port",     ([string]$env:POSTGRES_PORT),
+            "--pg-database", $env:POSTGRES_DATABASE,
+            "--pg-user",     $env:POSTGRES_USER,
+            "--pg-password", $pgPassword
+        )
+
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        & py "-3.12-32" @wpArgs 2>&1 | ForEach-Object {
+            $line = "[{0}] [WIN_PROB] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+            Write-Host $line
+            [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+        }
+        $wpExitCode = $LASTEXITCODE
+
+        $ErrorActionPreference = $prevEAP
+
+        if ($wpExitCode -eq 0) {
+            Write-Log "[WIN_PROB] $raceDate 計算完了"
+        } else {
+            Write-Log "[WIN_PROB] $raceDate 計算失敗 (exit: $wpExitCode)" "WARN"
+            $winProbFailed = $true
+        }
+    }
+
+    if ($winProbFailed) {
+        Write-Log "=== 推定勝率計算 一部失敗 - メイン同期は正常完了 ===" "WARN"
+    } else {
+        Write-Log "=== 推定勝率計算 COMPLETE ==="
+    }
+}
