@@ -479,6 +479,69 @@ if (-not (Test-Path $paceDevScript)) {
 }
 
 # ============================================================
+# バイアス補正計算（先週土日）Step 3④
+# ============================================================
+Write-Log "=== バイアス補正計算 START ==="
+
+$biasDevScript = Join-Path $root "scripts\calc_bias_correction.py"
+if (-not (Test-Path $biasDevScript)) {
+    Write-Log "scripts\calc_bias_correction.py が見つかりません - スキップ" "WARN"
+} else {
+    $today   = Get-Date
+    $dowInt  = [int]$today.DayOfWeek
+    $daysToLastSat = if ($dowInt -ge 1) { $dowInt + 1 } else { 7 }
+    $lastSat = $today.AddDays(-$daysToLastSat)
+    $lastSun = $lastSat.AddDays(1)
+
+    $raceDates = @(
+        $lastSat.ToString("yyyyMMdd"),
+        $lastSun.ToString("yyyyMMdd")
+    )
+    Write-Log "[BIAS_DEV] 対象日: $($raceDates -join ', ')"
+
+    $biasDevFailed = $false
+
+    foreach ($raceDate in $raceDates) {
+        Write-Log "[BIAS_DEV] $raceDate 計算開始"
+
+        $bdArgs = @(
+            $biasDevScript,
+            "--date",        $raceDate,
+            "--pg-host",     $env:POSTGRES_HOST,
+            "--pg-port",     ([string]$env:POSTGRES_PORT),
+            "--pg-database", $env:POSTGRES_DATABASE,
+            "--pg-user",     $env:POSTGRES_USER,
+            "--pg-password", $pgPassword
+        )
+
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        & py "-3.12-32" @bdArgs 2>&1 | ForEach-Object {
+            $line = "[{0}] [BIAS_DEV] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+            Write-Host $line
+            [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+        }
+        $bdExitCode = $LASTEXITCODE
+
+        $ErrorActionPreference = $prevEAP
+
+        if ($bdExitCode -eq 0) {
+            Write-Log "[BIAS_DEV] $raceDate 計算完了"
+        } else {
+            Write-Log "[BIAS_DEV] $raceDate 計算失敗 (exit: $bdExitCode)" "WARN"
+            $biasDevFailed = $true
+        }
+    }
+
+    if ($biasDevFailed) {
+        Write-Log "=== バイアス補正計算 一部失敗 - メイン同期は正常完了 ===" "WARN"
+    } else {
+        Write-Log "=== バイアス補正計算 COMPLETE ==="
+    }
+}
+
+# ============================================================
 # 馬場指数計算（先週土日）Step 1
 # ============================================================
 Write-Log "=== 馬場指数計算 START ==="
