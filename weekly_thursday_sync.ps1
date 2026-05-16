@@ -748,3 +748,42 @@ if (-not (Test-Path $currentIdxScript)) {
         Write-Log "=== 時系列補正計算 FAILED (exit: $ciExitCode) - メイン同期は正常完了 ===" "WARN"
     }
 }
+
+# ============================================================
+# 信頼度計算（全データ一括）Step 7
+# 依存: nl_horse_index.current_index（Step6完了後に実行すること）
+# 日付指定なし: nl_horse_index の全エントリを対象に reliability / adjusted_index を更新
+# ============================================================
+Write-Log "=== 信頼度計算 START ==="
+
+$reliabilityScript = Join-Path $root "scripts\calc_reliability.py"
+if (-not (Test-Path $reliabilityScript)) {
+    Write-Log "scripts\calc_reliability.py が見つかりません - スキップ" "WARN"
+} else {
+    $relArgs = @(
+        $reliabilityScript,
+        "--pg-host",     $env:POSTGRES_HOST,
+        "--pg-port",     ([string]$env:POSTGRES_PORT),
+        "--pg-database", $env:POSTGRES_DATABASE,
+        "--pg-user",     $env:POSTGRES_USER,
+        "--pg-password", $pgPassword
+    )
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
+    & py "-3.12-32" @relArgs 2>&1 | ForEach-Object {
+        $line = "[{0}] [RELIABILITY] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+        Write-Host $line
+        [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+    }
+    $relExitCode = $LASTEXITCODE
+
+    $ErrorActionPreference = $prevEAP
+
+    if ($relExitCode -eq 0) {
+        Write-Log "=== 信頼度計算 COMPLETE ==="
+    } else {
+        Write-Log "=== 信頼度計算 FAILED (exit: $relExitCode) - メイン同期は正常完了 ===" "WARN"
+    }
+}
