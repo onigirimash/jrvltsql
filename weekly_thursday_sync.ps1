@@ -852,3 +852,68 @@ if (-not (Test-Path $winProbScript)) {
         Write-Log "=== 推定勝率計算 COMPLETE ==="
     }
 }
+
+# ============================================================
+# 期待値計算（先週土日）Step 10
+# 依存: nl_race_prediction.win_prob（Step9）+ nl_o1（オッズ）
+# nl_o1 がない日は expected_value=NULL で記録し WARN しない
+# ============================================================
+Write-Log "=== 期待値計算 START ==="
+
+$evScript = Join-Path $root "scripts\calc_expected_value.py"
+if (-not (Test-Path $evScript)) {
+    Write-Log "scripts\calc_expected_value.py が見つかりません - スキップ" "WARN"
+} else {
+    $today   = Get-Date
+    $dowInt  = [int]$today.DayOfWeek
+    $daysToLastSat = if ($dowInt -ge 1) { $dowInt + 1 } else { 7 }
+    $lastSat = $today.AddDays(-$daysToLastSat)
+    $lastSun = $lastSat.AddDays(1)
+
+    $raceDates = @(
+        $lastSat.ToString("yyyyMMdd"),
+        $lastSun.ToString("yyyyMMdd")
+    )
+    Write-Log "[EV] 対象日: $($raceDates -join ', ')"
+
+    $evFailed = $false
+
+    foreach ($raceDate in $raceDates) {
+        Write-Log "[EV] $raceDate 計算開始"
+
+        $evArgs = @(
+            $evScript,
+            "--date",        $raceDate,
+            "--pg-host",     $env:POSTGRES_HOST,
+            "--pg-port",     ([string]$env:POSTGRES_PORT),
+            "--pg-database", $env:POSTGRES_DATABASE,
+            "--pg-user",     $env:POSTGRES_USER,
+            "--pg-password", $pgPassword
+        )
+
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        & py "-3.12-32" @evArgs 2>&1 | ForEach-Object {
+            $line = "[{0}] [EV] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+            Write-Host $line
+            [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+        }
+        $evExitCode = $LASTEXITCODE
+
+        $ErrorActionPreference = $prevEAP
+
+        if ($evExitCode -eq 0) {
+            Write-Log "[EV] $raceDate 計算完了"
+        } else {
+            Write-Log "[EV] $raceDate 計算失敗 (exit: $evExitCode)" "WARN"
+            $evFailed = $true
+        }
+    }
+
+    if ($evFailed) {
+        Write-Log "=== 期待値計算 一部失敗 - メイン同期は正常完了 ===" "WARN"
+    } else {
+        Write-Log "=== 期待値計算 COMPLETE ==="
+    }
+}
