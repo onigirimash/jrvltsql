@@ -605,3 +605,68 @@ if (-not (Test-Path $trackSpeedScript)) {
         Write-Log "=== 馬場指数計算 COMPLETE ==="
     }
 }
+
+# ============================================================
+# パフォーマンス指数計算（先週土日）Step 4
+# 依存: time_dev / futan_dev / disadv_dev / pace_dev / bias_dev / track_index
+# 必ず全補正計算・馬場指数計算の後に実行すること
+# ============================================================
+Write-Log "=== パフォーマンス指数計算 START ==="
+
+$perfIdxScript = Join-Path $root "scripts\calc_performance_index.py"
+if (-not (Test-Path $perfIdxScript)) {
+    Write-Log "scripts\calc_performance_index.py が見つかりません - スキップ" "WARN"
+} else {
+    $today   = Get-Date
+    $dowInt  = [int]$today.DayOfWeek
+    $daysToLastSat = if ($dowInt -ge 1) { $dowInt + 1 } else { 7 }
+    $lastSat = $today.AddDays(-$daysToLastSat)
+    $lastSun = $lastSat.AddDays(1)
+
+    $raceDates = @(
+        $lastSat.ToString("yyyyMMdd"),
+        $lastSun.ToString("yyyyMMdd")
+    )
+    Write-Log "[PERF_IDX] 対象日: $($raceDates -join ', ')"
+
+    $perfIdxFailed = $false
+
+    foreach ($raceDate in $raceDates) {
+        Write-Log "[PERF_IDX] $raceDate 計算開始"
+
+        $piArgs = @(
+            $perfIdxScript,
+            "--date",        $raceDate,
+            "--pg-host",     $env:POSTGRES_HOST,
+            "--pg-port",     ([string]$env:POSTGRES_PORT),
+            "--pg-database", $env:POSTGRES_DATABASE,
+            "--pg-user",     $env:POSTGRES_USER,
+            "--pg-password", $pgPassword
+        )
+
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        & py "-3.12-32" @piArgs 2>&1 | ForEach-Object {
+            $line = "[{0}] [PERF_IDX] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+            Write-Host $line
+            [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+        }
+        $piExitCode = $LASTEXITCODE
+
+        $ErrorActionPreference = $prevEAP
+
+        if ($piExitCode -eq 0) {
+            Write-Log "[PERF_IDX] $raceDate 計算完了"
+        } else {
+            Write-Log "[PERF_IDX] $raceDate 計算失敗 (exit: $piExitCode)" "WARN"
+            $perfIdxFailed = $true
+        }
+    }
+
+    if ($perfIdxFailed) {
+        Write-Log "=== パフォーマンス指数計算 一部失敗 - メイン同期は正常完了 ===" "WARN"
+    } else {
+        Write-Log "=== パフォーマンス指数計算 COMPLETE ==="
+    }
+}
