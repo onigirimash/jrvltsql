@@ -670,3 +670,42 @@ if (-not (Test-Path $perfIdxScript)) {
         Write-Log "=== パフォーマンス指数計算 COMPLETE ==="
     }
 }
+
+# ============================================================
+# 馬別実力指数計算（直近3年一括）Step 5
+# 依存: nl_performance.perf_index（Step4完了後に実行すること）
+# 日付指定なし: 常に直近3年全データを再計算して nl_horse_index を UPSERT
+# ============================================================
+Write-Log "=== 馬別実力指数計算 START ==="
+
+$horseIdxScript = Join-Path $root "scripts\calc_horse_index.py"
+if (-not (Test-Path $horseIdxScript)) {
+    Write-Log "scripts\calc_horse_index.py が見つかりません - スキップ" "WARN"
+} else {
+    $hiArgs = @(
+        $horseIdxScript,
+        "--pg-host",     $env:POSTGRES_HOST,
+        "--pg-port",     ([string]$env:POSTGRES_PORT),
+        "--pg-database", $env:POSTGRES_DATABASE,
+        "--pg-user",     $env:POSTGRES_USER,
+        "--pg-password", $pgPassword
+    )
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
+    & py "-3.12-32" @hiArgs 2>&1 | ForEach-Object {
+        $line = "[{0}] [HORSE_IDX] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+        Write-Host $line
+        [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+    }
+    $hiExitCode = $LASTEXITCODE
+
+    $ErrorActionPreference = $prevEAP
+
+    if ($hiExitCode -eq 0) {
+        Write-Log "=== 馬別実力指数計算 COMPLETE ==="
+    } else {
+        Write-Log "=== 馬別実力指数計算 FAILED (exit: $hiExitCode) - メイン同期は正常完了 ===" "WARN"
+    }
+}
