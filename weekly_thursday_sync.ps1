@@ -181,6 +181,52 @@ if (-not (Test-Path $weatherScript)) {
 }
 
 # ============================================================
+# nl_ra.haron3l 補完（nl_se からの再集計・外れ値クリア）
+# ============================================================
+Write-Log "=== haron3l 補完 START ==="
+
+$haronSql = Join-Path $root "scripts\fix_nl_ra_haron.sql"
+if (-not (Test-Path $haronSql)) {
+    Write-Log "[HARON_FIX] scripts\fix_nl_ra_haron.sql が見つかりません - スキップ" "WARN"
+} else {
+    # psql を検索（PATH 未登録環境に対応）
+    $psqlCmd = Get-Command psql -ErrorAction SilentlyContinue |
+               Select-Object -ExpandProperty Source
+    if (-not $psqlCmd) {
+        $psqlCmd = "C:\Program Files\PostgreSQL\17\bin\psql.exe"
+    }
+
+    if (-not (Test-Path $psqlCmd)) {
+        Write-Log "[HARON_FIX] psql.exe が見つかりません - スキップ" "WARN"
+    } else {
+        $env:PGPASSWORD = $pgPassword
+
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        & $psqlCmd `
+            -U $env:POSTGRES_USER `
+            -h $env:POSTGRES_HOST `
+            -p $env:POSTGRES_PORT `
+            -d $env:POSTGRES_DATABASE `
+            -f $haronSql 2>&1 | ForEach-Object {
+            $line = "[{0}] [HARON_FIX] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+            Write-Host $line
+            [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+        }
+        $haronExitCode = $LASTEXITCODE
+
+        $ErrorActionPreference = $prevEAP
+
+        if ($haronExitCode -eq 0) {
+            Write-Log "=== haron3l 補完 COMPLETE ==="
+        } else {
+            Write-Log "=== haron3l 補完 FAILED (exit: $haronExitCode) - メイン同期は正常完了 ===" "WARN"
+        }
+    }
+}
+
+# ============================================================
 # 馬場指数計算（先週土日）Step 1
 # ============================================================
 Write-Log "=== 馬場指数計算 START ==="
