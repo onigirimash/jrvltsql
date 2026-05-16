@@ -227,6 +227,132 @@ if (-not (Test-Path $haronSql)) {
 }
 
 # ============================================================
+# タイム偏差計算（先週土日）Step 2
+# ============================================================
+Write-Log "=== タイム偏差計算 START ==="
+
+$timeDevScript = Join-Path $root "scripts\calc_time_deviation.py"
+if (-not (Test-Path $timeDevScript)) {
+    Write-Log "scripts\calc_time_deviation.py が見つかりません - スキップ" "WARN"
+} else {
+    $today   = Get-Date
+    $dowInt  = [int]$today.DayOfWeek
+    $daysToLastSat = if ($dowInt -ge 1) { $dowInt + 1 } else { 7 }
+    $lastSat = $today.AddDays(-$daysToLastSat)
+    $lastSun = $lastSat.AddDays(1)
+
+    $raceDates = @(
+        $lastSat.ToString("yyyyMMdd"),
+        $lastSun.ToString("yyyyMMdd")
+    )
+    Write-Log "[TIME_DEV] 対象日: $($raceDates -join ', ')"
+
+    $timeDevFailed = $false
+
+    foreach ($raceDate in $raceDates) {
+        Write-Log "[TIME_DEV] $raceDate 計算開始"
+
+        $tdArgs = @(
+            $timeDevScript,
+            "--date",        $raceDate,
+            "--pg-host",     $env:POSTGRES_HOST,
+            "--pg-port",     ([string]$env:POSTGRES_PORT),
+            "--pg-database", $env:POSTGRES_DATABASE,
+            "--pg-user",     $env:POSTGRES_USER,
+            "--pg-password", $pgPassword
+        )
+
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        & py "-3.12-32" @tdArgs 2>&1 | ForEach-Object {
+            $line = "[{0}] [TIME_DEV] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+            Write-Host $line
+            [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+        }
+        $tdExitCode = $LASTEXITCODE
+
+        $ErrorActionPreference = $prevEAP
+
+        if ($tdExitCode -eq 0) {
+            Write-Log "[TIME_DEV] $raceDate 計算完了"
+        } else {
+            Write-Log "[TIME_DEV] $raceDate 計算失敗 (exit: $tdExitCode)" "WARN"
+            $timeDevFailed = $true
+        }
+    }
+
+    if ($timeDevFailed) {
+        Write-Log "=== タイム偏差計算 一部失敗 - メイン同期は正常完了 ===" "WARN"
+    } else {
+        Write-Log "=== タイム偏差計算 COMPLETE ==="
+    }
+}
+
+# ============================================================
+# 斤量補正計算（先週土日）Step 3①
+# ============================================================
+Write-Log "=== 斤量補正計算 START ==="
+
+$futanDevScript = Join-Path $root "scripts\calc_futan_correction.py"
+if (-not (Test-Path $futanDevScript)) {
+    Write-Log "scripts\calc_futan_correction.py が見つかりません - スキップ" "WARN"
+} else {
+    $today   = Get-Date
+    $dowInt  = [int]$today.DayOfWeek
+    $daysToLastSat = if ($dowInt -ge 1) { $dowInt + 1 } else { 7 }
+    $lastSat = $today.AddDays(-$daysToLastSat)
+    $lastSun = $lastSat.AddDays(1)
+
+    $raceDates = @(
+        $lastSat.ToString("yyyyMMdd"),
+        $lastSun.ToString("yyyyMMdd")
+    )
+    Write-Log "[FUTAN_DEV] 対象日: $($raceDates -join ', ')"
+
+    $futanDevFailed = $false
+
+    foreach ($raceDate in $raceDates) {
+        Write-Log "[FUTAN_DEV] $raceDate 計算開始"
+
+        $fdArgs = @(
+            $futanDevScript,
+            "--date",        $raceDate,
+            "--pg-host",     $env:POSTGRES_HOST,
+            "--pg-port",     ([string]$env:POSTGRES_PORT),
+            "--pg-database", $env:POSTGRES_DATABASE,
+            "--pg-user",     $env:POSTGRES_USER,
+            "--pg-password", $pgPassword
+        )
+
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        & py "-3.12-32" @fdArgs 2>&1 | ForEach-Object {
+            $line = "[{0}] [FUTAN_DEV] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+            Write-Host $line
+            [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+        }
+        $fdExitCode = $LASTEXITCODE
+
+        $ErrorActionPreference = $prevEAP
+
+        if ($fdExitCode -eq 0) {
+            Write-Log "[FUTAN_DEV] $raceDate 計算完了"
+        } else {
+            Write-Log "[FUTAN_DEV] $raceDate 計算失敗 (exit: $fdExitCode)" "WARN"
+            $futanDevFailed = $true
+        }
+    }
+
+    if ($futanDevFailed) {
+        Write-Log "=== 斤量補正計算 一部失敗 - メイン同期は正常完了 ===" "WARN"
+    } else {
+        Write-Log "=== 斤量補正計算 COMPLETE ==="
+    }
+}
+
+# ============================================================
 # 馬場指数計算（先週土日）Step 1
 # ============================================================
 Write-Log "=== 馬場指数計算 START ==="
