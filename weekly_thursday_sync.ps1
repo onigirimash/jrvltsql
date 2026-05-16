@@ -709,3 +709,42 @@ if (-not (Test-Path $horseIdxScript)) {
         Write-Log "=== 馬別実力指数計算 FAILED (exit: $hiExitCode) - メイン同期は正常完了 ===" "WARN"
     }
 }
+
+# ============================================================
+# 時系列補正計算（全データ一括）Step 6
+# 依存: nl_horse_index（Step5完了後に実行すること）
+# 日付指定なし: nl_horse_index の全エントリを対象に current_index を更新
+# ============================================================
+Write-Log "=== 時系列補正計算 START ==="
+
+$currentIdxScript = Join-Path $root "scripts\calc_current_index.py"
+if (-not (Test-Path $currentIdxScript)) {
+    Write-Log "scripts\calc_current_index.py が見つかりません - スキップ" "WARN"
+} else {
+    $ciArgs = @(
+        $currentIdxScript,
+        "--pg-host",     $env:POSTGRES_HOST,
+        "--pg-port",     ([string]$env:POSTGRES_PORT),
+        "--pg-database", $env:POSTGRES_DATABASE,
+        "--pg-user",     $env:POSTGRES_USER,
+        "--pg-password", $pgPassword
+    )
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+
+    & py "-3.12-32" @ciArgs 2>&1 | ForEach-Object {
+        $line = "[{0}] [CURRENT_IDX] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
+        Write-Host $line
+        [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+    }
+    $ciExitCode = $LASTEXITCODE
+
+    $ErrorActionPreference = $prevEAP
+
+    if ($ciExitCode -eq 0) {
+        Write-Log "=== 時系列補正計算 COMPLETE ==="
+    } else {
+        Write-Log "=== 時系列補正計算 FAILED (exit: $ciExitCode) - メイン同期は正常完了 ===" "WARN"
+    }
+}
