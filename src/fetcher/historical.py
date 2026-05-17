@@ -320,13 +320,13 @@ class HistoricalFetcher(BaseFetcher):
             self.cache_manager = None
 
     def _wait_for_download(
-        self, download_task_id: Optional[int] = None, timeout: int = 600, interval: float = 0.08
+        self, download_task_id: Optional[int] = None, timeout: int = 14400, interval: float = 0.08
     ):
         """Wait for JV-Link download to complete.
 
         Args:
             download_task_id: Progress task ID for download (optional)
-            timeout: Maximum wait time in seconds (default: 600 = 10 minutes).
+            timeout: Maximum wait time in seconds (default: 14400 = 4 hours).
             interval: Status check interval in seconds (default: 0.08).
                      kmy-keiba uses 80ms (Task.Delay(80)) for download polling.
 
@@ -338,7 +338,7 @@ class HistoricalFetcher(BaseFetcher):
         retry_count = 0
         max_retries = 2  # Maximum retries for temporary errors
         last_progress_time = start_time  # Track when progress last changed (stall detection)
-        stall_timeout = 1800.0  # 30 minutes before stall abort (RACE data decompression can pause status)
+        stall_timeout = 14400.0  # 4 hours before stall abort (large historical downloads can pause for extended periods)
         # Count how many consecutive 0-status polls we get BEFORE download_started.
         # If download finishes before our first poll, status is immediately 0 and
         # download_started never becomes True → we'd loop forever.  After

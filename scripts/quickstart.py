@@ -1815,11 +1815,11 @@ class QuickstartRunner:
         ("COMM", "各種解説情報", 1),
     ]
 
-    # 今週データモード: option=2で直近のレースデータのみ取得（高速）
-    # 注意: option=2 は TOKU, RACE, TCVN, RCVN のみ対応
+    # 更新モード: RACEはoption=1（差分）で確定結果（LapTime/Haron3F/Haron3L）を取得
+    # option=2（今週データ）はレース前データのみで確定結果が含まれないため使用しない
     UPDATE_SPECS = [
         ("TOKU", "特別登録馬", 2),
-        ("RACE", "レース情報", 2),
+        ("RACE", "レース情報", 1),
         ("TCVN", "調教師変更情報", 2),
         ("RCVN", "騎手変更情報", 2),
     ]
@@ -2043,6 +2043,10 @@ class QuickstartRunner:
         # --no-odds: オッズ系スペック(O1-O6)を除外
         if self.settings.get('no_odds'):
             specs = [(s, d, o) for s, d, o in specs if not s.startswith('O')]
+
+        # --no-difn: DIFNスペックを除外
+        if self.settings.get('no_difn'):
+            specs = [(s, d, o) for s, d, o in specs if s != 'DIFN']
 
         return specs
 
@@ -2961,18 +2965,20 @@ class QuickstartRunner:
     def _run_create_tables(self) -> bool:
         """テーブル作成"""
         try:
-            result = subprocess.run(
-                [sys.executable, "-m", "src.cli.main", "create-tables"],
-                cwd=self.project_root,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                timeout=60,
-            )
-            if result.returncode != 0:
-                self.errors.append(f"テーブル作成失敗: {result.stderr}")
-            return result.returncode == 0
+            from src.database.schema import SCHEMAS
+            database = self._create_database()
+            with database:
+                failed_tables = []
+                for table_name, schema_sql in SCHEMAS.items():
+                    try:
+                        database.execute(schema_sql)
+                    except Exception as e:
+                        failed_tables.append(f"{table_name}: {e}")
+                if failed_tables:
+                    # 個別テーブルの失敗はwarningのみ（既存テーブルはIF NOT EXISTSで通常成功）
+                    for msg in failed_tables:
+                        logger.warning(f"テーブル作成警告: {msg}")
+            return True
         except Exception as e:
             self.errors.append(f"テーブル作成エラー: {e}")
             return False
@@ -2980,18 +2986,12 @@ class QuickstartRunner:
     def _run_create_indexes(self) -> bool:
         """インデックス作成"""
         try:
-            result = subprocess.run(
-                [sys.executable, "-m", "src.cli.main", "create-indexes"],
-                cwd=self.project_root,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                timeout=120,
-            )
-            if result.returncode != 0:
-                self.errors.append(f"インデックス作成失敗: {result.stderr}")
-            return result.returncode == 0
+            from src.database.indexes import IndexManager
+            database = self._create_database()
+            with database:
+                index_manager = IndexManager(database)
+                index_manager.create_all_indexes()
+            return True
         except Exception as e:
             self.errors.append(f"インデックス作成エラー: {e}")
             return False
@@ -3168,10 +3168,12 @@ class QuickstartRunner:
         # option=1: Normal（差分取得）
         # option=2: ThisWeek（今週データ）
         # option=4: Setup（セットアップ、全データ取得）
+        # --no-setup-mode: option=4への自動切替を無効化（ダイアログ抑制）
         from_date_str = self.settings['from_date']
         from_date_dt = datetime.strptime(from_date_str, "%Y%m%d")
         months_ago = (datetime.now().year * 12 + datetime.now().month) - (from_date_dt.year * 12 + from_date_dt.month)
-        if option == 1 and spec in OPTION_4_SUPPORTED_SPECS and months_ago > 11:
+        if (option == 1 and spec in OPTION_4_SUPPORTED_SPECS and months_ago > 11
+                and not self.settings.get('no_setup_mode')):
             option = 4  # 11ヶ月以上前 → セットアップモード
 
         try:
@@ -3196,6 +3198,7 @@ class QuickstartRunner:
                     batch_size=1000,
                     service_key=config.get("jvlink.service_key"),
                     show_progress=True,
+                    skip_record_specs=self.settings.get('skip_record_specs'),
                 )
 
                 # データ取得実行
@@ -3375,6 +3378,12 @@ def main():
                         help="取得期間（年数）。指定すると--from-dateは無視される")
     parser.add_argument("--no-odds", action="store_true",
                         help="オッズデータ(O1-O6)を除外")
+    parser.add_argument("--odds-filter", type=str, default=None, metavar="SPECS",
+                        help="取得するオッズ種別をカンマ区切りで指定 (例: o1,o2 → 単勝複勝・馬連のみ。未指定時は全種別)")
+    parser.add_argument("--no-difn", action="store_true",
+                        help="DIFNスペック（蓄積系ソフト用蓄積情報）を除外（大容量バックフィル時に使用）")
+    parser.add_argument("--no-setup-mode", action="store_true",
+                        help="option=4（セットアップモード）への自動切替を無効化。ダイアログを表示しないがやや遅い")
     parser.add_argument("--no-monitor", action="store_true",
                         help="バックグラウンド監視を無効化")
     parser.add_argument("--log-file", type=str, default=None,
@@ -3477,6 +3486,20 @@ def main():
 
         # オッズ除外
         settings['no_odds'] = args.no_odds
+
+        # オッズ種別フィルタ (例: "o1,o2" → {'O1','O2'} のみ取得)
+        if args.odds_filter:
+            keep = {s.strip().upper() for s in args.odds_filter.split(',')}
+            all_odds = {'O1', 'O2', 'O3', 'O4', 'O5', 'O6'}
+            settings['skip_record_specs'] = all_odds - keep
+        else:
+            settings['skip_record_specs'] = set()
+
+        # DIFN除外
+        settings['no_difn'] = args.no_difn
+
+        # セットアップモード（option=4）自動切替の無効化
+        settings['no_setup_mode'] = args.no_setup_mode
 
         # データソース: JRA固定
         settings['data_source'] = 'jra'

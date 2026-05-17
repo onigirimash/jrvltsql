@@ -39,6 +39,9 @@ class BatchProcessor:
         ...     )
     """
 
+    # RecordSpec codes that belong to the "odds" group (O1-O6)
+    _ALL_ODDS_SPECS = frozenset({"O1", "O2", "O3", "O4", "O5", "O6"})
+
     def __init__(
         self,
         database: BaseDatabase,
@@ -47,6 +50,7 @@ class BatchProcessor:
         service_key: Optional[str] = None,
         show_progress: bool = True,
         cache_manager=None,
+        skip_record_specs: Optional[set] = None,
     ):
         """Initialize batch processor.
 
@@ -58,6 +62,7 @@ class BatchProcessor:
                         programmatically without requiring registry configuration.
             show_progress: Show stylish progress display (default: True)
             cache_manager: Optional CacheManager for local file cache read/write
+            skip_record_specs: Set of RecordSpec codes to skip (e.g. {"O3","O4","O5","O6"})
         """
         self.fetcher = HistoricalFetcher(
             sid,
@@ -67,6 +72,7 @@ class BatchProcessor:
         self.importer = DataImporter(database, batch_size)
         self.database = database
         self.cache_manager = cache_manager
+        self.skip_record_specs: frozenset = frozenset(skip_record_specs) if skip_record_specs else frozenset()
 
         logger.info(
             "BatchProcessor initialized",
@@ -144,6 +150,8 @@ class BatchProcessor:
                 )
             else:
                 records = self.fetcher.fetch(data_spec, from_date, to_date, option)
+            if self.skip_record_specs:
+                records = self._apply_record_filter(records)
             import_stats = self.importer.import_records(records, auto_commit)
 
             # Combine statistics
@@ -178,6 +186,13 @@ class BatchProcessor:
             chunk_end = min(end, datetime(year, 12, 31))
             yield chunk_start.strftime("%Y%m%d"), chunk_end.strftime("%Y%m%d")
             year += 1
+
+    def _apply_record_filter(self, records):
+        """Yield only records whose RecordSpec is not in skip_record_specs."""
+        for record in records:
+            spec = record.get("RecordSpec") or record.get("headRecordSpec", "")
+            if spec not in self.skip_record_specs:
+                yield record
 
     def _process_split_setup_range(
         self,
