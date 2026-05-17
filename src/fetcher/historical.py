@@ -225,19 +225,12 @@ class HistoricalFetcher(BaseFetcher):
             raise FetcherError(f"Historical fetch failed: {e}")
 
         finally:
-            # Close stream
+            # Close stream (keep COM object alive for subsequent fetch() calls in split-setup)
             try:
                 self.jvlink.jv_close()
                 logger.info("Data stream closed")
             except Exception as e:
                 logger.warning(f"Failed to close stream: {e}")
-
-            # Explicitly cleanup COM resources
-            if hasattr(self.jvlink, 'cleanup'):
-                try:
-                    self.jvlink.cleanup()
-                except Exception:
-                    pass
 
             # Stop progress display
             if self.progress_display:
