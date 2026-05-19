@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>競馬予想ツール</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>🏇 競馬予想ツール</h1>
+</header>
+
+<div class="container">
+
+  <!-- フィルター -->
+  <div class="filters">
+    <div class="filter-group">
+      <label for="sel-date">レース日</label>
+      <select id="sel-date"><option value="">読み込み中...</option></select>
+    </div>
+    <div class="filter-group">
+      <label for="sel-venue">競馬場</label>
+      <select id="sel-venue" disabled><option value="">場を選択</option></select>
+    </div>
+    <div class="filter-group">
+      <label for="sel-race">レース番号</label>
+      <select id="sel-race" disabled><option value="">Rを選択</option></select>
+    </div>
+  </div>
+
+  <!-- レース情報バナー -->
+  <div class="race-banner" id="race-banner"></div>
+
+  <!-- ステータス -->
+  <div id="status"></div>
+
+  <!-- テーブル -->
+  <div class="table-wrap" id="table-wrap" style="display:none">
+    <table>
+      <thead>
+        <tr>
+          <th class="col-num no-sort">馬番</th>
+          <th class="col-name no-sort">馬名</th>
+          <th class="col-prob" data-col="win_prob_pct" data-dir="desc">推定勝率</th>
+          <th class="col-idx"  data-col="adjusted_index" data-dir="desc">実力指数</th>
+          <th class="col-odds" data-col="odds" data-dir="asc">単勝オッズ</th>
+          <th class="col-ev"   data-col="expected_value" data-dir="desc">期待値</th>
+          <th class="col-rec no-sort">推奨</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <!-- 凡例 -->
+  <div class="legend" id="legend" style="display:none">
+    <div class="legend-item"><div class="legend-dot rec"></div>買い推奨（EV&gt;2.0）</div>
+    <div class="legend-item"><div class="legend-dot normal"></div>その他</div>
+    <div class="legend-item" style="margin-left:auto;color:#999">
+      列ヘッダーをクリックで並び替え
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+'use strict';
+
+// ── State ──────────────────────────────────────────────
+let _horses   = [];     // current result rows
+let _sortCol  = 'expected_value';
+let _sortDir  = 'desc'; // 'asc' | 'desc'
+
+// ── DOM refs ───────────────────────────────────────────
+const selDate  = document.getElementById('sel-date');
+const selVenue = document.getElementById('sel-venue');
+const selRace  = document.getElementById('sel-race');
+const banner   = document.getElementById('race-banner');
+const status   = document.getElementById('status');
+const wrap     = document.getElementById('table-wrap');
+const tbody    = document.getElementById('tbody');
+const legend   = document.getElementById('legend');
+
+// ── Utilities ──────────────────────────────────────────
+async function apiFetch(url) {
+  const r = await fetch(url);
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error(j.detail || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+function setStatus(msg, isError = false) {
+  status.textContent = msg;
+  status.className   = isError ? 'error' : '';
+}
+
+function resetSelect(el, placeholder) {
+  el.innerHTML = `<option value="">${placeholder}</option>`;
+  el.disabled  = true;
+}
+
+function fmtEv(v) {
+  if (v === null || v === undefined) return '<span class="ev-null">―</span>';
+  const cls = v >= 0 ? 'ev-pos' : 'ev-neg';
+  const sign = v >= 0 ? '+' : '';
+  return `<span class="ev-cell ${cls}">${sign}${v.toFixed(3)}</span>`;
+}
+
+function fmtOdds(v) {
+  return v !== null && v !== undefined ? v.toFixed(1) : '―';
+}
+
+function fmtProb(v) {
+  if (v === null || v === undefined) return '―';
+  const pct = v.toFixed(1);
+  const bar = Math.min(v / 50 * 100, 100); // scale: 50% = full bar
+  return `<div class="prob-bar-wrap">
+    <span class="prob-val">${pct}%</span>
+    <div class="prob-bar-bg"><div class="prob-bar" style="width:${bar}%"></div></div>
+  </div>`;
+}
+
+function fmtIdx(v) {
+  return v !== null && v !== undefined ? v.toFixed(1) : '―';
+}
+
+// ── Sort ───────────────────────────────────────────────
+function sortHorses(col, dir) {
+  _horses = [..._horses].sort((a, b) => {
+    const av = a[col] ?? (dir === 'desc' ? -Infinity : Infinity);
+    const bv = b[col] ?? (dir === 'desc' ? -Infinity : Infinity);
+    return dir === 'desc' ? bv - av : av - bv;
+  });
+}
+
+function applySort(col) {
+  if (_sortCol === col) {
+    _sortDir = _sortDir === 'desc' ? 'asc' : 'desc';
+  } else {
+    _sortCol = col;
+    _sortDir = 'desc';
+  }
+  sortHorses(_sortCol, _sortDir);
+  updateSortHeaders();
+  renderTable();
+}
+
+function updateSortHeaders() {
+  document.querySelectorAll('thead th[data-col]').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.col === _sortCol) {
+      th.classList.add(_sortDir === 'desc' ? 'sort-desc' : 'sort-asc');
+    }
+  });
+}
+
+// ── Render ─────────────────────────────────────────────
+function renderTable() {
+  if (!_horses.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">データがありません</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = _horses.map(h => {
+    const recClass = h.is_recommended ? 'recommended' : '';
+    const recBadge = h.is_recommended
+      ? '<span class="badge-rec">✔</span>'
+      : '<span class="badge-no-rec">―</span>';
+    return `<tr class="${recClass}">
+      <td><span class="umaban">${h.umaban}</span></td>
+      <td class="col-name">${h.bamei}</td>
+      <td>${fmtProb(h.win_prob_pct)}</td>
+      <td>${fmtIdx(h.adjusted_index)}</td>
+      <td>${fmtOdds(h.odds)}</td>
+      <td>${fmtEv(h.expected_value)}</td>
+      <td>${recBadge}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── API calls ──────────────────────────────────────────
+async function loadDates() {
+  setStatus('日付を読み込み中...');
+  try {
+    const dates = await apiFetch('/api/dates');
+    selDate.innerHTML = '<option value="">日付を選択</option>' +
+      dates.map(d => `<option value="${d.value}">${d.label}</option>`).join('');
+    selDate.disabled = false;
+    setStatus('');
+  } catch (e) {
+    setStatus(`日付の読み込みに失敗: ${e.message}`, true);
+  }
+}
+
+async function loadVenues(date) {
+  resetSelect(selVenue, '読み込み中...');
+  resetSelect(selRace,  'Rを選択');
+  try {
+    const venues = await apiFetch(`/api/venues?date=${date}`);
+    selVenue.innerHTML = '<option value="">競馬場を選択</option>' +
+      venues.map(v => `<option value="${v.code}">${v.name}</option>`).join('');
+    selVenue.disabled = venues.length === 0;
+    if (venues.length === 1) {
+      selVenue.value = venues[0].code;
+      await loadRaces(date, venues[0].code);
+    }
+  } catch (e) {
+    setStatus(`競馬場の読み込みに失敗: ${e.message}`, true);
+  }
+}
+
+async function loadRaces(date, venue) {
+  resetSelect(selRace, '読み込み中...');
+  try {
+    const races = await apiFetch(`/api/race_list?date=${date}&venue=${venue}`);
+    selRace.innerHTML = '<option value="">レースを選択</option>' +
+      races.map(n => `<option value="${n}">第${n}R</option>`).join('');
+    selRace.disabled = races.length === 0;
+    if (races.length === 1) {
+      selRace.value = String(races[0]);
+      await loadPrediction(date, venue, races[0]);
+    }
+  } catch (e) {
+    setStatus(`レース一覧の読み込みに失敗: ${e.message}`, true);
+  }
+}
+
+async function loadPrediction(date, venue, race) {
+  setStatus('読み込み中...');
+  wrap.style.display = 'none';
+  legend.style.display = 'none';
+  banner.classList.remove('visible');
+  _horses = [];
+
+  try {
+    const data = await apiFetch(`/api/prediction?date=${date}&venue=${venue}&race=${race}`);
+    const info = data.race_info;
+
+    // バナー
+    const namePart = info.race_name ? ` 【${info.race_name}】` : '';
+    const surfPart = info.surface && info.distance
+      ? ` ${info.surface}${info.distance}m`
+      : '';
+    banner.innerHTML =
+      `<strong>${info.date}　${info.venue}　第${info.race_num}R</strong>${namePart}${surfPart}` +
+      `　<span style="color:#888;font-size:.82rem">${data.horses.length}頭</span>`;
+    banner.classList.add('visible');
+
+    _horses     = data.horses;
+    _sortCol    = 'expected_value';
+    _sortDir    = 'desc';
+    sortHorses(_sortCol, _sortDir);
+    updateSortHeaders();
+    renderTable();
+
+    wrap.style.display   = '';
+    legend.style.display = 'flex';
+    setStatus('');
+  } catch (e) {
+    setStatus(e.message === '該当するデータが見つかりません'
+      ? 'このレースの予想データがありません。'
+      : `エラー: ${e.message}`, true);
+  }
+}
+
+// ── Event listeners ────────────────────────────────────
+selDate.addEventListener('change', () => {
+  const d = selDate.value;
+  resetSelect(selVenue, '場を選択');
+  resetSelect(selRace,  'Rを選択');
+  wrap.style.display = 'none';
+  legend.style.display = 'none';
+  banner.classList.remove('visible');
+  setStatus('');
+  if (d) loadVenues(d);
+});
+
+selVenue.addEventListener('change', () => {
+  const d = selDate.value, v = selVenue.value;
+  resetSelect(selRace, 'Rを選択');
+  wrap.style.display = 'none';
+  if (d && v) loadRaces(d, v);
+});
+
+selRace.addEventListener('change', () => {
+  const d = selDate.value, v = selVenue.value, r = selRace.value;
+  if (d && v && r) loadPrediction(d, v, r);
+});
+
+// ソートヘッダー
+document.querySelectorAll('thead th[data-col]').forEach(th => {
+  th.addEventListener('click', () => applySort(th.dataset.col));
+});
+
+// ── Init ───────────────────────────────────────────────
+loadDates();
+</script>
+
+</body>
+</html>

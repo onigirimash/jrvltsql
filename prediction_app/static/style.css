@@ -1,0 +1,168 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Helvetica Neue', Arial, 'Hiragino Sans', sans-serif;
+  background: #f0f2f5;
+  color: #222;
+  font-size: 14px;
+}
+
+/* ── Header ── */
+header {
+  background: #1a3a5c;
+  color: #fff;
+  padding: .85rem 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: .02em; }
+
+/* ── Layout ── */
+.container { max-width: 1000px; margin: 0 auto; padding: 1.25rem 1.5rem; }
+
+/* ── Filter bar ── */
+.filters {
+  display: flex;
+  align-items: flex-end;
+  gap: .75rem;
+  flex-wrap: wrap;
+  background: #fff;
+  padding: 1rem 1.25rem;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  margin-bottom: 1.25rem;
+}
+.filter-group { display: flex; flex-direction: column; gap: 4px; }
+.filter-group label { font-size: .72rem; color: #666; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.filter-group select {
+  padding: .4rem .65rem;
+  border: 1px solid #c8cdd5;
+  border-radius: 5px;
+  font-size: .88rem;
+  background: #fff;
+  min-width: 140px;
+  cursor: pointer;
+  appearance: auto;
+}
+.filter-group select:focus { outline: 2px solid #2a6db5; outline-offset: 1px; }
+.filter-group select:disabled { background: #f5f5f5; color: #aaa; cursor: default; }
+
+/* ── Race info banner ── */
+.race-banner {
+  background: #fff;
+  border-left: 4px solid #1a3a5c;
+  padding: .7rem 1rem;
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 1rem;
+  font-size: .88rem;
+  color: #444;
+  display: none;
+}
+.race-banner.visible { display: block; }
+.race-banner strong { font-size: 1rem; color: #1a3a5c; }
+
+/* ── Status / error ── */
+#status {
+  font-size: .83rem;
+  color: #888;
+  margin-bottom: .75rem;
+  min-height: 1.2em;
+}
+#status.error { color: #c0392b; }
+
+/* ── Results table ── */
+.table-wrap {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  overflow: hidden;
+}
+
+table { width: 100%; border-collapse: collapse; }
+
+thead th {
+  background: #1a3a5c;
+  color: #fff;
+  padding: .6rem .75rem;
+  text-align: center;
+  font-size: .76rem;
+  font-weight: 700;
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
+}
+thead th:hover { background: #24507a; }
+thead th.sort-asc::after  { content: ' ▲'; }
+thead th.sort-desc::after { content: ' ▼'; }
+thead th.no-sort { cursor: default; }
+thead th.no-sort:hover { background: #1a3a5c; }
+
+thead th.col-num    { width: 52px; }
+thead th.col-name   { text-align: left; min-width: 110px; }
+thead th.col-prob   { width: 82px; }
+thead th.col-idx    { width: 82px; }
+thead th.col-odds   { width: 76px; }
+thead th.col-ev     { width: 88px; }
+thead th.col-rec    { width: 58px; }
+
+tbody td {
+  padding: .55rem .75rem;
+  border-bottom: 1px solid #eef0f3;
+  text-align: center;
+  vertical-align: middle;
+}
+tbody td.col-name { text-align: left; font-weight: 500; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: #f4f7fb; }
+
+/* ── Row states ── */
+tbody tr.recommended td         { background: #e8f5e9; }
+tbody tr.recommended:hover td   { background: #d6edd8; }
+tbody tr.recommended td.col-name { color: #1b5e20; }
+
+/* ── Cell styles ── */
+.umaban {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #e8ecf0;
+  font-weight: 700;
+  font-size: .82rem;
+}
+.prob-bar-wrap { position: relative; display: flex; align-items: center; gap: 6px; justify-content: center; }
+.prob-val { min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
+.prob-bar-bg { width: 36px; height: 6px; background: #e5e7ea; border-radius: 3px; overflow: hidden; flex-shrink: 0; }
+.prob-bar    { height: 100%; background: #2a6db5; border-radius: 3px; }
+
+.ev-cell { font-variant-numeric: tabular-nums; font-weight: 600; }
+.ev-pos  { color: #1b5e20; }
+.ev-neg  { color: #999; font-weight: 400; }
+.ev-null { color: #bbb; font-size: .8rem; }
+
+.badge-rec    { color: #1b5e20; font-size: 1.1rem; }
+.badge-no-rec { color: #ddd; }
+
+/* ── Empty state ── */
+.empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: #aaa;
+  font-size: .9rem;
+}
+
+/* ── Legend ── */
+.legend {
+  display: flex;
+  gap: 1.25rem;
+  margin-top: .75rem;
+  font-size: .78rem;
+  color: #666;
+}
+.legend-item { display: flex; align-items: center; gap: 5px; }
+.legend-dot { width: 12px; height: 12px; border-radius: 2px; }
+.legend-dot.rec { background: #c8e6c9; border: 1px solid #81c784; }
+.legend-dot.normal { background: #fff; border: 1px solid #ddd; }
