@@ -4,8 +4,8 @@
 信頼度計算スクリプト（実力点数化 Step 7）
 
 馬全体の出走回数合計から信頼度を算出し
-adjusted_index = current_index × reliability を計算して nl_horse_index へ保存する。
-（距離区分・馬場に関係なく、その馬の全出走回数を信頼度の基準にする）
+adjusted_index = current_index × reliability + 50 × (1 - reliability) を計算して nl_horse_index へ保存する。
+（信頼度が低い馬は平均値50へ縮約。距離区分・馬場に関係なく、その馬の全出走回数を信頼度の基準にする）
 
 出走回数 → 信頼度 の線形補間:
   1戦  → 0.300
@@ -131,7 +131,7 @@ def calc_reliability(conn: pg8000.native.Connection) -> dict:
         if current_index is None:
             adjusted = None
         else:
-            adjusted = round(float(current_index) * reliability, 3)
+            adjusted = round(float(current_index) * reliability + 50.0 * (1.0 - reliability), 3)
             updated += 1
 
         if current_index is None:
