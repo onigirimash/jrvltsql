@@ -3,8 +3,9 @@
 """
 信頼度計算スクリプト（実力点数化 Step 7）
 
-(distance_cat, surface) 別の出走回数から信頼度を算出し
+馬全体の出走回数合計から信頼度を算出し
 adjusted_index = current_index × reliability を計算して nl_horse_index へ保存する。
+（距離区分・馬場に関係なく、その馬の全出走回数を信頼度の基準にする）
 
 出走回数 → 信頼度 の線形補間:
   1戦  → 0.300
@@ -32,23 +33,11 @@ import pg8000.native
 # SQL
 # ──────────────────────────────────────────────────────
 
-# (kettonum, distance_cat, surface) 別出走回数を一括集計
+# 馬全体（distance_cat・surface を問わない）の出走回数を一括集計
 _SQL_RACE_COUNT = """
-SELECT kettonum, distance_cat, surface, COUNT(*) AS race_count
+SELECT kettonum, COUNT(*) AS race_count
 FROM (
-    SELECT
-        TRIM(se.kettonum) AS kettonum,
-        CASE
-            WHEN ra.kyori <= 1400 THEN 'S'
-            WHEN ra.kyori <= 1800 THEN 'M'
-            WHEN ra.kyori <= 2200 THEN 'I'
-            ELSE 'L'
-        END AS distance_cat,
-        CASE LEFT(ra.trackcd, 1)
-            WHEN '1' THEN 'T'
-            WHEN '2' THEN 'D'
-            ELSE 'J'
-        END AS surface
+    SELECT TRIM(se.kettonum) AS kettonum
     FROM nl_se se
     JOIN nl_ra ra
       ON  ra.year      = se.year
@@ -67,7 +56,7 @@ FROM (
       AND se.kettonum <> ''
       AND p.perf_index IS NOT NULL
 ) sub
-GROUP BY kettonum, distance_cat, surface
+GROUP BY kettonum
 """
 
 _SQL_UPDATE = """
@@ -118,13 +107,13 @@ def _connect(args) -> pg8000.native.Connection:
 # ──────────────────────────────────────────────────────
 
 def calc_reliability(conn: pg8000.native.Connection) -> dict:
-    # 出走回数を集計
+    # 出走回数を集計（馬全体の合計）
     count_rows = conn.run(_SQL_RACE_COUNT)
-    count_map: dict[tuple, int] = {
-        (str(k).strip(), str(d).strip(), str(s).strip()): int(c)
-        for k, d, s, c in count_rows
+    count_map: dict[str, int] = {
+        str(k).strip(): int(c)
+        for k, c in count_rows
     }
-    print(f"  出走回数集計: {len(count_map)} 件（馬×距離区分×走路）")
+    print(f"  出走回数集計: {len(count_map)} 頭（馬全体の合計出走回数）")
 
     # nl_horse_index の全エントリを対象に UPDATE
     keys = conn.run(
@@ -136,8 +125,7 @@ def calc_reliability(conn: pg8000.native.Connection) -> dict:
     no_current = 0
 
     for kettonum, dist_cat, surface, current_index in keys:
-        key = (str(kettonum).strip(), str(dist_cat).strip(), str(surface).strip())
-        race_count  = count_map.get(key, 0)
+        race_count  = count_map.get(str(kettonum).strip(), 0)
         reliability = round(_race_count_to_reliability(race_count), 3)
 
         if current_index is None:

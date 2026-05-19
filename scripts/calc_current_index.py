@@ -3,7 +3,12 @@
 """
 時系列補正スクリプト（実力点数化 Step 6）
 
-nl_performance の perf_index を時系列集約し nl_horse_index.current_index を更新する。
+nl_performance の perf_index を norm_index スケール（avg=50, std=10）に正規化してから
+時系列集約し nl_horse_index.current_index を更新する。
+
+正規化:
+  norm_scaled = (perf_index - global_mean) / global_std × 10 + 50
+  これにより current_index が norm_index と同一スケール（avg≈50, std≈8〜9）になる。
 
 算出式:
   current_index = 直近5走加重平均 × 0.7 + キャリアベスト3走平均 × 0.3
@@ -11,12 +16,12 @@ nl_performance の perf_index を時系列集約し nl_horse_index.current_index
 直近5走加重平均:
   対象: 同一 (distance_cat, surface) の直近5走（perf_index IS NOT NULL）
   重み: exp(-経過日数 / 180)
-  計算: Σ(perf_index × weight) / Σ(weight)
+  計算: Σ(norm_scaled × weight) / Σ(weight)
   ※ 5走未満でも得られた走数で計算
 
 キャリアベスト3走平均:
   対象: 同一 (distance_cat, surface) の直近2年以内のレース
-  選択: perf_index 上位3走の単純平均
+  選択: norm_scaled 上位3走の単純平均
   ※ 3走未満でも得られた走数で計算
 
 合成フォールバック:
@@ -46,6 +51,13 @@ import pg8000.native
 # ──────────────────────────────────────────────────────
 # SQL
 # ──────────────────────────────────────────────────────
+
+# perf_index のグローバル統計（正規化に使用）
+_SQL_PERF_STATS = """
+SELECT AVG(perf_index), STDDEV_POP(perf_index)
+FROM nl_performance
+WHERE perf_index IS NOT NULL
+"""
 
 # 中央競馬の全出走馬 × perf_index を取得（日付制限なし）
 _SQL_FETCH = """
@@ -216,19 +228,30 @@ def calc_current_index(
 ) -> dict:
     today = date.today()
 
+    # perf_index のグローバル統計を取得（norm_index スケールへの正規化に使用）
+    stat_row = conn.run(_SQL_PERF_STATS)[0]
+    perf_mean = float(stat_row[0])
+    perf_std  = float(stat_row[1])
+    if perf_std == 0:
+        perf_std = 1.0
+    print(f"  perf_index 統計: mean={perf_mean:.4f}  std={perf_std:.4f}")
+    print(f"  正規化式: (perf_index - {perf_mean:.4f}) / {perf_std:.4f} × 10 + 50")
+
     # 全出走履歴を取得
     rows = conn.run(_SQL_FETCH)
     print(f"  取得: {len(rows)} 行")
 
-    # (kettonum, dist_cat, surface) → [(race_date, perf_index)] 日付降順
+    # (kettonum, dist_cat, surface) → [(race_date, norm_scaled)] 日付降順
+    # norm_scaled = (perf_index - global_mean) / global_std * 10 + 50
     horse_races: dict[tuple, list] = defaultdict(list)
     for row in rows:
         kettonum, year, monthday, kyori, track_first, perf_index = row
-        race_date = _to_date(int(year), int(monthday))
-        dist_cat  = _kyori_to_dist_cat(int(kyori))
-        surface   = _track_to_surface(track_first or '')
+        race_date   = _to_date(int(year), int(monthday))
+        dist_cat    = _kyori_to_dist_cat(int(kyori))
+        surface     = _track_to_surface(track_first or '')
+        norm_scaled = (float(perf_index) - perf_mean) / perf_std * 10 + 50
         horse_races[(str(kettonum), dist_cat, surface)].append(
-            (race_date, float(perf_index))
+            (race_date, norm_scaled)
         )
 
     # nl_horse_index の全キーを取得

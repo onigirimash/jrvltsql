@@ -41,7 +41,7 @@ import pg8000.native
 # 定数
 # ──────────────────────────────────────────────────────
 
-_DEFAULT_T       = 0.1
+_DEFAULT_T       = 5.0
 _DEFAULT_DEBUT   = 3
 _DEFAULT_VERSION = '1.0'
 

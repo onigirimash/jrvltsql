@@ -1,4 +1,4 @@
-"""Historical data fetcher for JLTSQL.
+﻿"""Historical data fetcher for JLTSQL.
 
 This module fetches historical JV-Data from JV-Link.
 """
@@ -331,7 +331,7 @@ class HistoricalFetcher(BaseFetcher):
         retry_count = 0
         max_retries = 2  # Maximum retries for temporary errors
         last_progress_time = start_time  # Track when progress last changed (stall detection)
-        stall_timeout = 14400.0  # 4 hours before stall abort (large historical downloads can pause for extended periods)
+        stall_timeout = 7200.0  # 2 hours before stall abort
         # Count how many consecutive 0-status polls we get BEFORE download_started.
         # If download finishes before our first poll, status is immediately 0 and
         # download_started never becomes True → we'd loop forever.  After
@@ -455,3 +455,4 @@ class HistoricalFetcher(BaseFetcher):
                     raise
 
                 raise FetcherError(f"Failed to check download status: {e}")
+
