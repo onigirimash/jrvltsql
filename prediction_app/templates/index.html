@@ -42,10 +42,10 @@
       <thead>
         <tr>
           <th class="col-num no-sort">馬番</th>
-          <th class="col-name no-sort">馬名</th>
-          <th class="col-prob" data-col="win_prob_pct" data-dir="desc">推定勝率</th>
+          <th class="col-name no-sort">馬名 <span style="font-size:.68rem;opacity:.7">（クリックで履歴）</span></th>
+          <th class="col-prob" data-col="win_prob_pct"   data-dir="desc">推定勝率</th>
           <th class="col-idx"  data-col="adjusted_index" data-dir="desc">実力指数</th>
-          <th class="col-odds" data-col="odds" data-dir="asc">単勝オッズ</th>
+          <th class="col-odds" data-col="odds"           data-dir="asc">単勝オッズ</th>
           <th class="col-ev"   data-col="expected_value" data-dir="desc">期待値</th>
           <th class="col-rec no-sort">推奨</th>
         </tr>
@@ -58,20 +58,31 @@
   <div class="legend" id="legend" style="display:none">
     <div class="legend-item"><div class="legend-dot rec"></div>買い推奨（EV&gt;2.0）</div>
     <div class="legend-item"><div class="legend-dot normal"></div>その他</div>
-    <div class="legend-item" style="margin-left:auto;color:#999">
-      列ヘッダーをクリックで並び替え
-    </div>
+    <div class="legend-item" style="margin-left:auto;color:#999">列ヘッダークリックで並び替え</div>
   </div>
 
 </div><!-- /container -->
+
+<!-- ── 馬別履歴モーダル ── -->
+<div class="modal-overlay" id="modal" style="display:none" role="dialog" aria-modal="true">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-title">過去レース履歴</span>
+      <button class="modal-close" id="modal-close" aria-label="閉じる">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body">
+      <p class="loading">読み込み中...</p>
+    </div>
+  </div>
+</div>
 
 <script>
 'use strict';
 
 // ── State ──────────────────────────────────────────────
-let _horses   = [];     // current result rows
-let _sortCol  = 'expected_value';
-let _sortDir  = 'desc'; // 'asc' | 'desc'
+let _horses  = [];
+let _sortCol = 'expected_value';
+let _sortDir = 'desc';
 
 // ── DOM refs ───────────────────────────────────────────
 const selDate  = document.getElementById('sel-date');
@@ -82,6 +93,9 @@ const status   = document.getElementById('status');
 const wrap     = document.getElementById('table-wrap');
 const tbody    = document.getElementById('tbody');
 const legend   = document.getElementById('legend');
+const modal    = document.getElementById('modal');
+const modalTitle = document.getElementById('modal-title');
+const modalBody  = document.getElementById('modal-body');
 
 // ── Utilities ──────────────────────────────────────────
 async function apiFetch(url) {
@@ -103,29 +117,49 @@ function resetSelect(el, placeholder) {
   el.disabled  = true;
 }
 
+function surfaceTag(surf) {
+  if (!surf) return '';
+  if (surf === '芝')    return `<span class="tag-siba">${surf}</span>`;
+  if (surf === 'ダート') return `<span class="tag-dirt">${surf}</span>`;
+  return `<span class="tag-jump">${surf}</span>`;
+}
+
+// ── Table cell formatters ───────────────────────────────
 function fmtEv(v) {
   if (v === null || v === undefined) return '<span class="ev-null">―</span>';
-  const cls = v >= 0 ? 'ev-pos' : 'ev-neg';
+  const cls  = v >= 0 ? 'ev-pos' : 'ev-neg';
   const sign = v >= 0 ? '+' : '';
   return `<span class="ev-cell ${cls}">${sign}${v.toFixed(3)}</span>`;
 }
 
 function fmtOdds(v) {
-  return v !== null && v !== undefined ? v.toFixed(1) : '―';
+  return (v !== null && v !== undefined) ? v.toFixed(1) : '―';
 }
 
 function fmtProb(v) {
   if (v === null || v === undefined) return '―';
-  const pct = v.toFixed(1);
-  const bar = Math.min(v / 50 * 100, 100); // scale: 50% = full bar
+  const bar = Math.min(v / 50 * 100, 100);
   return `<div class="prob-bar-wrap">
-    <span class="prob-val">${pct}%</span>
+    <span class="prob-val">${v.toFixed(1)}%</span>
     <div class="prob-bar-bg"><div class="prob-bar" style="width:${bar}%"></div></div>
   </div>`;
 }
 
 function fmtIdx(v) {
-  return v !== null && v !== undefined ? v.toFixed(1) : '―';
+  return (v !== null && v !== undefined) ? v.toFixed(1) : '―';
+}
+
+function fmtPerf(v) {
+  if (v === null || v === undefined) return '―';
+  const cls  = v >= 0 ? 'perf-pos' : 'perf-neg';
+  const sign = v >= 0 ? '+' : '';
+  return `<span class="${cls}">${sign}${v.toFixed(4)}</span>`;
+}
+
+function fmtPos(v) {
+  if (!v) return '―';
+  const cls = v === 1 ? 'pos-1' : v === 2 ? 'pos-2' : v === 3 ? 'pos-3' : '';
+  return `<span class="${cls}">${v}着</span>`;
 }
 
 // ── Sort ───────────────────────────────────────────────
@@ -138,12 +172,8 @@ function sortHorses(col, dir) {
 }
 
 function applySort(col) {
-  if (_sortCol === col) {
-    _sortDir = _sortDir === 'desc' ? 'asc' : 'desc';
-  } else {
-    _sortCol = col;
-    _sortDir = 'desc';
-  }
+  _sortDir = (_sortCol === col && _sortDir === 'desc') ? 'asc' : 'desc';
+  _sortCol = col;
   sortHorses(_sortCol, _sortDir);
   updateSortHeaders();
   renderTable();
@@ -152,37 +182,38 @@ function applySort(col) {
 function updateSortHeaders() {
   document.querySelectorAll('thead th[data-col]').forEach(th => {
     th.classList.remove('sort-asc', 'sort-desc');
-    if (th.dataset.col === _sortCol) {
+    if (th.dataset.col === _sortCol)
       th.classList.add(_sortDir === 'desc' ? 'sort-desc' : 'sort-asc');
-    }
   });
 }
 
-// ── Render ─────────────────────────────────────────────
+// ── Render main table ──────────────────────────────────
 function renderTable() {
   if (!_horses.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="empty">データがありません</td></tr>';
     return;
   }
-
   tbody.innerHTML = _horses.map(h => {
     const recClass = h.is_recommended ? 'recommended' : '';
-    const recBadge = h.is_recommended
+    const badge    = h.is_recommended
       ? '<span class="badge-rec">✔</span>'
       : '<span class="badge-no-rec">―</span>';
+    const nameCell = h.kettonum
+      ? `<span class="horse-link" data-kettonum="${h.kettonum}" data-bamei="${h.bamei}">${h.bamei}</span>`
+      : h.bamei;
     return `<tr class="${recClass}">
       <td><span class="umaban">${h.umaban}</span></td>
-      <td class="col-name">${h.bamei}</td>
+      <td class="col-name">${nameCell}</td>
       <td>${fmtProb(h.win_prob_pct)}</td>
       <td>${fmtIdx(h.adjusted_index)}</td>
       <td>${fmtOdds(h.odds)}</td>
       <td>${fmtEv(h.expected_value)}</td>
-      <td>${recBadge}</td>
+      <td>${badge}</td>
     </tr>`;
   }).join('');
 }
 
-// ── API calls ──────────────────────────────────────────
+// ── API: load selects ───────────────────────────────────
 async function loadDates() {
   setStatus('日付を読み込み中...');
   try {
@@ -198,7 +229,7 @@ async function loadDates() {
 
 async function loadVenues(date) {
   resetSelect(selVenue, '読み込み中...');
-  resetSelect(selRace,  'Rを選択');
+  resetSelect(selRace, 'Rを選択');
   try {
     const venues = await apiFetch(`/api/venues?date=${date}`);
     selVenue.innerHTML = '<option value="">競馬場を選択</option>' +
@@ -218,11 +249,16 @@ async function loadRaces(date, venue) {
   try {
     const races = await apiFetch(`/api/race_list?date=${date}&venue=${venue}`);
     selRace.innerHTML = '<option value="">レースを選択</option>' +
-      races.map(n => `<option value="${n}">第${n}R</option>`).join('');
+      races.map(r => {
+        const surf = r.surface || '';
+        const dist = r.distance ? `${r.distance}m` : '';
+        const sep  = surf && dist ? '' : '';
+        return `<option value="${r.racenum}">第${r.racenum}R ${surf}${sep}${dist}</option>`;
+      }).join('');
     selRace.disabled = races.length === 0;
     if (races.length === 1) {
-      selRace.value = String(races[0]);
-      await loadPrediction(date, venue, races[0]);
+      selRace.value = String(races[0].racenum);
+      await loadPrediction(date, venue, races[0].racenum);
     }
   } catch (e) {
     setStatus(`レース一覧の読み込みに失敗: ${e.message}`, true);
@@ -240,19 +276,18 @@ async function loadPrediction(date, venue, race) {
     const data = await apiFetch(`/api/prediction?date=${date}&venue=${venue}&race=${race}`);
     const info = data.race_info;
 
-    // バナー
     const namePart = info.race_name ? ` 【${info.race_name}】` : '';
-    const surfPart = info.surface && info.distance
-      ? ` ${info.surface}${info.distance}m`
+    const surfPart = info.surface || info.distance
+      ? `　${info.surface}${info.distance ? info.distance + 'm' : ''}`
       : '';
     banner.innerHTML =
       `<strong>${info.date}　${info.venue}　第${info.race_num}R</strong>${namePart}${surfPart}` +
       `　<span style="color:#888;font-size:.82rem">${data.horses.length}頭</span>`;
     banner.classList.add('visible');
 
-    _horses     = data.horses;
-    _sortCol    = 'expected_value';
-    _sortDir    = 'desc';
+    _horses  = data.horses;
+    _sortCol = 'expected_value';
+    _sortDir = 'desc';
     sortHorses(_sortCol, _sortDir);
     updateSortHeaders();
     renderTable();
@@ -261,17 +296,72 @@ async function loadPrediction(date, venue, race) {
     legend.style.display = 'flex';
     setStatus('');
   } catch (e) {
-    setStatus(e.message === '該当するデータが見つかりません'
+    setStatus(e.message.includes('見つかりません')
       ? 'このレースの予想データがありません。'
       : `エラー: ${e.message}`, true);
   }
+}
+
+// ── Horse history modal ────────────────────────────────
+async function showHorseHistory(kettonum, bamei) {
+  modalTitle.textContent = `${bamei}　過去レース履歴`;
+  modalBody.innerHTML    = '<p class="loading">読み込み中...</p>';
+  modal.style.display    = 'flex';
+  document.body.style.overflow = 'hidden';
+
+  try {
+    const data = await apiFetch(`/api/horse_history?kettonum=${encodeURIComponent(kettonum)}`);
+    if (!data.races.length) {
+      modalBody.innerHTML = '<p class="loading">過去レースデータがありません。</p>';
+      return;
+    }
+
+    const rows = data.races.map(r => {
+      const distPart = r.distance ? `${r.distance}m` : '';
+      const raceLabel = r.race_name
+        ? `<span style="color:#555">${r.race_name}</span>`
+        : `第${r.race_num}R`;
+      return `<tr>
+        <td class="left">${r.date}</td>
+        <td>${r.venue}</td>
+        <td>${raceLabel}</td>
+        <td>${surfaceTag(r.surface)}${distPart}</td>
+        <td>${fmtPos(r.finish_pos)}</td>
+        <td>${fmtPerf(r.perf_index)}</td>
+        <td>${r.norm_index !== null && r.norm_index !== undefined ? r.norm_index.toFixed(1) : '―'}</td>
+      </tr>`;
+    }).join('');
+
+    modalBody.innerHTML = `
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th class="left">日付</th>
+            <th>競馬場</th>
+            <th>レース</th>
+            <th>馬場・距離</th>
+            <th>着順</th>
+            <th>perf_index</th>
+            <th>norm_index</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } catch (e) {
+    modalBody.innerHTML = `<p class="loading" style="color:#c0392b">エラー: ${e.message}</p>`;
+  }
+}
+
+function closeModal() {
+  modal.style.display = 'none';
+  document.body.style.overflow = '';
 }
 
 // ── Event listeners ────────────────────────────────────
 selDate.addEventListener('change', () => {
   const d = selDate.value;
   resetSelect(selVenue, '場を選択');
-  resetSelect(selRace,  'Rを選択');
+  resetSelect(selRace, 'Rを選択');
   wrap.style.display = 'none';
   legend.style.display = 'none';
   banner.classList.remove('visible');
@@ -295,6 +385,17 @@ selRace.addEventListener('change', () => {
 document.querySelectorAll('thead th[data-col]').forEach(th => {
   th.addEventListener('click', () => applySort(th.dataset.col));
 });
+
+// 馬名クリック（イベント委譲）
+tbody.addEventListener('click', e => {
+  const link = e.target.closest('.horse-link');
+  if (link) showHorseHistory(link.dataset.kettonum, link.dataset.bamei);
+});
+
+// モーダルを閉じる
+document.getElementById('modal-close').addEventListener('click', closeModal);
+modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 // ── Init ───────────────────────────────────────────────
 loadDates();

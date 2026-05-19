@@ -10,7 +10,13 @@ JYO_MAP = {
     "09": "阪神", "10": "小倉",
 }
 
-SURFACE_MAP = {"1": "芝", "2": "ダート", "3": "障害"}
+# trackcd 先頭文字 → 馬場
+def _surface(cd: str) -> str:
+    c = (cd or "").strip()[:1]
+    if c == "1": return "芝"
+    if c == "2": return "ダート"
+    if c in ("3", "4", "5"): return "障害"
+    return ""
 
 
 def _parse_date(date_str: str) -> tuple[int, int]:
@@ -70,19 +76,37 @@ def get_race_list(
     date:  str = Query(..., min_length=8, max_length=8),
     venue: str = Query(...),
 ):
-    """指定日・競馬場のレース番号一覧を返す。"""
+    """指定日・競馬場のレース番号・馬場・距離一覧を返す。"""
     year, monthday = _parse_date(date)
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute("""
-            SELECT DISTINCT racenum
-            FROM nl_race_prediction
-            WHERE year = %s AND monthday = %s AND jyocd = %s
-              AND expected_value IS NOT NULL
-            ORDER BY racenum
-        """, (year, monthday, venue))
+            SELECT
+                rp.racenum,
+                ra.kyori,
+                LEFT(COALESCE(ra.trackcd, ''), 1) AS surface_cd
+            FROM (
+                SELECT DISTINCT racenum
+                FROM nl_race_prediction
+                WHERE year = %s AND monthday = %s AND jyocd = %s
+                  AND expected_value IS NOT NULL
+            ) rp
+            LEFT JOIN nl_ra ra
+                ON  ra.year     = %s
+                AND ra.monthday = %s
+                AND ra.jyocd    = %s
+                AND ra.racenum  = rp.racenum
+            ORDER BY rp.racenum
+        """, (year, monthday, venue, year, monthday, venue))
         rows = to_dicts(cur)
-    return [r["racenum"] for r in rows]
+    return [
+        {
+            "racenum":  r["racenum"],
+            "surface":  _surface(r.get("surface_cd") or ""),
+            "distance": int(r["kyori"]) if r.get("kyori") else None,
+        }
+        for r in rows
+    ]
 
 
 # ── GET /api/prediction ─────────────────────────────────────────────────────
@@ -100,7 +124,8 @@ def get_prediction(
         cur.execute("""
             SELECT
                 rp.umaban,
-                COALESCE(TRIM(se.bamei), '不明')          AS bamei,
+                TRIM(rp.kettonum)                          AS kettonum,
+                COALESCE(TRIM(se.bamei), '不明')           AS bamei,
                 ROUND(rp.win_prob::numeric * 100, 1)       AS win_prob_pct,
                 ROUND(rp.adjusted_index::numeric, 1)       AS adjusted_index,
                 rp.odds,
@@ -139,6 +164,7 @@ def get_prediction(
     horses = [
         {
             "umaban":         r["umaban"],
+            "kettonum":       (r.get("kettonum") or "").strip(),
             "bamei":          r["bamei"],
             "win_prob_pct":   float(r["win_prob_pct"])   if r["win_prob_pct"]   is not None else None,
             "adjusted_index": float(r["adjusted_index"]) if r["adjusted_index"] is not None else None,
@@ -155,8 +181,77 @@ def get_prediction(
             "venue":     JYO_MAP.get(venue.strip(), venue),
             "race_num":  race,
             "race_name": first.get("race_name") or "",
-            "surface":   SURFACE_MAP.get(surface_cd, ""),
-            "distance":  first.get("kyori") or 0,
+            "surface":   _surface(surface_cd),
+            "distance":  int(first["kyori"]) if first.get("kyori") else 0,
         },
         "horses": horses,
     }
+
+
+# ── GET /api/horse_history ──────────────────────────────────────────────────
+@router.get("/api/horse_history")
+def get_horse_history(kettonum: str = Query(...)):
+    """馬の過去10走を返す（perf_index・norm_index含む）。"""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                se.year,
+                se.monthday,
+                se.jyocd,
+                se.racenum,
+                se.kakuteijyuni                             AS finish_pos,
+                COALESCE(TRIM(se.bamei), '')               AS bamei,
+                ra.kyori,
+                LEFT(COALESCE(ra.trackcd, ''), 1)          AS surface_cd,
+                COALESCE(TRIM(ra.ryakusyo6), '')           AS race_name,
+                ROUND(p.perf_index::numeric, 4)            AS perf_index,
+                ROUND(hi.norm_index::numeric, 1)           AS norm_index
+            FROM nl_se se
+            LEFT JOIN nl_ra ra
+                ON  ra.year     = se.year
+                AND ra.monthday = se.monthday
+                AND ra.jyocd    = se.jyocd
+                AND ra.racenum  = se.racenum
+            LEFT JOIN nl_performance p
+                ON  p.year        = se.year
+                AND p.monthday    = se.monthday
+                AND p.jyocd       = se.jyocd
+                AND p.racenum::int = se.racenum
+                AND p.umaban::int  = se.umaban
+            LEFT JOIN nl_horse_index hi
+                ON  hi.kettonum     = TRIM(se.kettonum)
+                AND hi.distance_cat = CASE
+                        WHEN ra.kyori <= 1400 THEN 'S'
+                        WHEN ra.kyori <= 1800 THEN 'M'
+                        WHEN ra.kyori <= 2200 THEN 'I'
+                        ELSE 'L' END
+                AND hi.surface      = CASE LEFT(COALESCE(ra.trackcd,''), 1)
+                        WHEN '1' THEN 'T'
+                        WHEN '2' THEN 'D'
+                        ELSE 'J' END
+            WHERE TRIM(se.kettonum) = %s
+              AND se.jyocd BETWEEN '01' AND '10'
+              AND se.kakuteijyuni >= 1
+            ORDER BY se.year DESC, se.monthday DESC
+            LIMIT 10
+        """, (kettonum.strip(),))
+        rows = to_dicts(cur)
+
+    races = [
+        {
+            "date":       f"{r['year']}/{r['monthday'] // 100:02d}/{r['monthday'] % 100:02d}",
+            "venue":      JYO_MAP.get((r["jyocd"] or "").strip(), r["jyocd"]),
+            "race_num":   r["racenum"],
+            "race_name":  r["race_name"],
+            "surface":    _surface(r.get("surface_cd") or ""),
+            "distance":   int(r["kyori"]) if r.get("kyori") else None,
+            "finish_pos": r["finish_pos"],
+            "perf_index": float(r["perf_index"]) if r.get("perf_index") is not None else None,
+            "norm_index": float(r["norm_index"]) if r.get("norm_index") is not None else None,
+        }
+        for r in rows
+    ]
+
+    bamei = rows[0]["bamei"] if rows else kettonum
+    return {"kettonum": kettonum, "bamei": bamei, "races": races}
