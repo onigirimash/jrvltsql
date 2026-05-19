@@ -53,30 +53,42 @@ SET odds = NULL, expected_value = NULL, is_recommended = NULL
 WHERE year = :year AND monthday = :monthday
 """
 
-# nl_o1 と JOIN して一括更新
+# nl_o1 と JOIN して一括更新。nl_o1.tanodds が欠損する日は nl_se.odds にフォールバック。
 # DISTINCT ON で最新 makedate の行を採用（複数タイムスタンプ対応）
 _SQL_UPDATE = """
 UPDATE nl_race_prediction p
-SET odds           = ROUND((o.tanodds::numeric * :factor::numeric), 1),
-    expected_value = ROUND((p.win_prob::numeric * o.tanodds::numeric * :factor::numeric - 1), 4),
+SET odds           = ROUND((src.odds_val::numeric * :factor::numeric), 1),
+    expected_value = ROUND((p.win_prob::numeric * src.odds_val::numeric * :factor::numeric - 1), 4),
     ev_threshold   = :ev_threshold,
-    is_recommended = (p.win_prob::numeric * o.tanodds::numeric * :factor::numeric - 1 > :ev_threshold::numeric)
+    is_recommended = (p.win_prob::numeric * src.odds_val::numeric * :factor::numeric - 1 > :ev_threshold::numeric)
 FROM (
-    SELECT DISTINCT ON (jyocd, racenum, umaban)
-        jyocd, racenum, umaban, tanodds
-    FROM nl_o1
-    WHERE year     = :year
-      AND monthday = :monthday
-      AND umaban   > 0
-      AND tanodds IS NOT NULL
-      AND tanodds  > 0
-    ORDER BY jyocd, racenum, umaban, makedate DESC
-) o
+    SELECT
+        se.jyocd,
+        se.racenum,
+        se.umaban,
+        COALESCE(o.tanodds, se.odds) AS odds_val
+    FROM nl_se se
+    LEFT JOIN (
+        SELECT DISTINCT ON (jyocd, racenum, umaban)
+            jyocd, racenum, umaban, tanodds
+        FROM nl_o1
+        WHERE year     = :year
+          AND monthday = :monthday
+          AND umaban   > 0
+          AND tanodds IS NOT NULL
+          AND tanodds  > 0
+        ORDER BY jyocd, racenum, umaban, makedate DESC
+    ) o ON o.jyocd = se.jyocd AND o.racenum = se.racenum AND o.umaban = se.umaban
+    WHERE se.year     = :year
+      AND se.monthday = :monthday
+      AND se.umaban   > 0
+      AND COALESCE(o.tanodds, se.odds) > 0
+) src
 WHERE p.year     = :year
   AND p.monthday = :monthday
-  AND p.jyocd    = o.jyocd
-  AND p.racenum  = o.racenum
-  AND p.umaban   = o.umaban
+  AND p.jyocd    = src.jyocd
+  AND p.racenum  = src.racenum
+  AND p.umaban   = src.umaban
 """
 
 # 更新後サマリ
