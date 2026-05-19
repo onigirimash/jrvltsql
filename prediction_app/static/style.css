@@ -260,3 +260,88 @@ tbody tr.recommended td.col-name .horse-link { color: #1b5e20; }
 .tag-siba  { background: #e8f5e9; color: #2e7d32; padding: 1px 6px; border-radius: 3px; font-size: .76rem; font-weight: 600; }
 .tag-dirt  { background: #fff3e0; color: #e65100; padding: 1px 6px; border-radius: 3px; font-size: .76rem; font-weight: 600; }
 .tag-jump  { background: #fce4ec; color: #880e4f; padding: 1px 6px; border-radius: 3px; font-size: .76rem; font-weight: 600; }
+
+/* ── Bias panel ── */
+.bias-panel {
+  background: #fff;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: .85rem 1.2rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+.bias-header {
+  font-size: .72rem;
+  font-weight: 700;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: .65rem;
+}
+.bias-form {
+  display: flex;
+  align-items: flex-end;
+  gap: .9rem;
+  flex-wrap: wrap;
+}
+.bias-group { display: flex; flex-direction: column; gap: 4px; }
+.bias-group label { font-size: .72rem; color: #666; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.bias-group input[type="number"],
+.bias-group select {
+  padding: .38rem .6rem;
+  border: 1px solid #c8cdd5;
+  border-radius: 5px;
+  font-size: .88rem;
+  background: #fff;
+  min-width: 120px;
+  appearance: auto;
+}
+.bias-group input[type="number"] { min-width: 90px; }
+.bias-group input:focus, .bias-group select:focus { outline: 2px solid #2a6db5; outline-offset: 1px; }
+.bias-note { font-size: .76rem; color: #888; align-self: flex-end; padding-bottom: .35rem; }
+.bias-note.active { color: #1565c0; font-weight: 600; }
+
+/* ── Running style badges ── */
+.running-style {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  border-radius: 3px;
+  font-size: .76rem;
+  font-weight: 700;
+}
+.rs-escape { background: #ef9a9a; color: #b71c1c; }
+.rs-lead   { background: #fff176; color: #f57f17; }
+.rs-mid    { background: #a5d6a7; color: #1b5e20; }
+.rs-close  { background: #90caf9; color: #0d47a1; }
+.rs-null   { color: #bbb; }
+
+/* ── Bias tag (inline delta) ── */
+.bias-tag {
+  font-size: .65rem;
+  font-weight: 700;
+  color: #1565c0;
+  margin-left: 3px;
+  vertical-align: super;
+}
+
+/* ── Rank badge ── */
+.rank-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: .74rem;
+  font-weight: 700;
+  background: #e3f2fd;
+  color: #1565c0;
+}
+.rank-badge.rank-1 { background: #ffd54f; color: #6d4c00; }
+.rank-badge.rank-2 { background: #cfd8dc; color: #37474f; }
+.rank-badge.rank-3 { background: #d7ccc8; color: #4e342e; }
+
+/* ── New column widths ── */
+thead th.col-run     { width: 46px; }
+thead th.col-adj-ev  { width: 96px; }
+thead th.col-rank    { width: 64px; }

@@ -155,8 +155,35 @@ def get_prediction(
         """, (year, monthday, venue, race))
         rows = to_dicts(cur)
 
-    if not rows:
-        raise HTTPException(404, "該当するデータが見つかりません")
+        if not rows:
+            raise HTTPException(404, "該当するデータが見つかりません")
+
+        # 直近10走の平均コーナー順位（脚質判定用）
+        kettonums = list({(r.get("kettonum") or "").strip() for r in rows if r.get("kettonum")})
+        corner_map: dict[str, float] = {}
+        if kettonums:
+            placeholders = ",".join(["%s"] * len(kettonums))
+            cur.execute(f"""
+                WITH ranked AS (
+                    SELECT
+                        TRIM(kettonum) AS kt,
+                        jyuni1c,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY TRIM(kettonum)
+                            ORDER BY year DESC, monthday DESC
+                        ) AS rn
+                    FROM nl_se
+                    WHERE TRIM(kettonum) IN ({placeholders})
+                      AND kakuteijyuni >= 1
+                      AND jyuni1c > 0
+                )
+                SELECT kt, ROUND(AVG(jyuni1c)::numeric, 1) AS avg_corner_pos
+                FROM ranked
+                WHERE rn <= 10
+                GROUP BY kt
+            """, kettonums)
+            for cr in to_dicts(cur):
+                corner_map[cr["kt"]] = float(cr["avg_corner_pos"])
 
     first = rows[0]
     surface_cd = (first.get("surface_cd") or "").strip()
@@ -173,6 +200,7 @@ def get_prediction(
             "odds":           float(r["odds"])           if r["odds"]           is not None else None,
             "expected_value": float(r["expected_value"]) if r["expected_value"] is not None else None,
             "is_recommended": bool(r["is_recommended"])  if r["is_recommended"] is not None else False,
+            "avg_corner_pos": corner_map.get((r.get("kettonum") or "").strip()),
         }
         for r in rows
     ]
