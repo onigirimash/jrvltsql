@@ -97,15 +97,16 @@ WHERE year = :year AND monthday = :monthday
 _SQL_INSERT = """
 INSERT INTO nl_race_prediction
     (year, monthday, jyocd, racenum, umaban, kettonum,
-     adjusted_index, win_prob, t_parameter, logic_version, created_at)
+     adjusted_index, win_prob, place_prob, t_parameter, logic_version, created_at)
 VALUES
     (:year, :monthday, :jyocd, :racenum, :umaban, :kettonum,
-     :adjusted_index, :win_prob, :t_parameter, :logic_version, NOW())
+     :adjusted_index, :win_prob, :place_prob, :t_parameter, :logic_version, NOW())
 ON CONFLICT (year, monthday, jyocd, racenum, umaban)
 DO UPDATE SET
     kettonum       = EXCLUDED.kettonum,
     adjusted_index = EXCLUDED.adjusted_index,
     win_prob       = EXCLUDED.win_prob,
+    place_prob     = EXCLUDED.place_prob,
     t_parameter    = EXCLUDED.t_parameter,
     logic_version  = EXCLUDED.logic_version,
     created_at     = EXCLUDED.created_at
@@ -146,6 +147,58 @@ def _softmax(values: list[float], T: float) -> list[float]:
     exps  = [math.exp((v - max_v) / T) for v in values]
     total = sum(exps)
     return [e / total for e in exps]
+
+
+def _plackett_luce_place(probs: list[float]) -> list[float]:
+    """Plackett-Luce モデルで 3着以内確率 (place_prob) を計算する。
+
+    n <= 3 のレースは全馬 1.0（必ず3着以内）。
+    n >= 4 では以下の厳密式を使用:
+      P(i 1st) = p[i]
+      P(i 2nd) = Σ_{j≠i} p[j] * p[i] / (1 - p[j])
+      P(i 3rd) = Σ_{j≠i} Σ_{k≠i,k≠j} p[j] * (p[k]/(1-p[j])) * (p[i]/(1-p[j]-p[k]))
+    """
+    n = len(probs)
+    if n <= 3:
+        return [1.0] * n
+
+    place = list(probs)  # 1着確率を初期値に
+
+    # 2着確率
+    for i in range(n):
+        p2 = 0.0
+        pi = probs[i]
+        for j in range(n):
+            if j == i:
+                continue
+            pj = probs[j]
+            dj = 1.0 - pj
+            if dj > 1e-9:
+                p2 += pj * pi / dj
+        place[i] += p2
+
+    # 3着確率
+    for i in range(n):
+        p3 = 0.0
+        pi = probs[i]
+        for j in range(n):
+            if j == i:
+                continue
+            pj = probs[j]
+            dj = 1.0 - pj
+            if dj <= 1e-9:
+                continue
+            for k in range(n):
+                if k == i or k == j:
+                    continue
+                pk = probs[k]
+                djk = dj - pk  # 1 - p[j] - p[k]
+                if djk <= 1e-9:
+                    continue
+                p3 += pj * (pk / dj) * (pi / djk)
+        place[i] += p3
+
+    return [min(1.0, max(0.0, p)) for p in place]
 
 
 # ──────────────────────────────────────────────────────
@@ -201,9 +254,10 @@ def calc_one_day(
             for h in horses
         ]
 
-        probs = _softmax(adj_values, T)
+        probs        = _softmax(adj_values, T)
+        place_probs  = _plackett_luce_place(probs)
 
-        for h, adj, prob in zip(horses, adj_values, probs):
+        for h, adj, prob, pplace in zip(horses, adj_values, probs, place_probs):
             conn.run(
                 _SQL_INSERT,
                 year=year,
@@ -214,6 +268,7 @@ def calc_one_day(
                 kettonum=h['kettonum'],
                 adjusted_index=round(adj, 3) if h['adjusted_index'] is not None else None,
                 win_prob=round(prob, 6),
+                place_prob=round(pplace, 6),
                 t_parameter=T,
                 logic_version=logic_version,
             )

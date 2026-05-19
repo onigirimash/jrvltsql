@@ -101,6 +101,7 @@ thead th.no-sort:hover { background: #1a3a5c; }
 thead th.col-num    { width: 52px; }
 thead th.col-name   { text-align: left; min-width: 110px; }
 thead th.col-prob   { width: 90px; }
+thead th.col-place  { width: 90px; }
 thead th.col-idx    { width: 82px; }
 thead th.col-odds   { width: 76px; }
 thead th.col-ev     { width: 88px; }
@@ -147,6 +148,7 @@ tbody tr.recommended td.col-name .horse-link { color: #1b5e20; }
 .prob-val { min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
 .prob-bar-bg { width: 36px; height: 6px; background: #e5e7ea; border-radius: 3px; overflow: hidden; flex-shrink: 0; }
 .prob-bar    { height: 100%; background: #2a6db5; border-radius: 3px; }
+.place-bar   { height: 100%; background: #e67e22; border-radius: 3px; }
 
 .ev-cell { font-variant-numeric: tabular-nums; font-weight: 600; }
 .ev-pos  { color: #1b5e20; }

@@ -43,10 +43,11 @@
         <tr>
           <th class="col-num no-sort">馬番</th>
           <th class="col-name no-sort">馬名 <span style="font-size:.68rem;opacity:.7">（クリックで履歴）</span></th>
-          <th class="col-prob" data-col="win_prob_pct"   data-dir="desc">推定勝率</th>
-          <th class="col-idx"  data-col="adjusted_index" data-dir="desc">実力指数</th>
-          <th class="col-odds" data-col="odds"           data-dir="asc">単勝オッズ</th>
-          <th class="col-ev"   data-col="expected_value" data-dir="desc">期待値</th>
+          <th class="col-prob"  data-col="win_prob_pct"   data-dir="desc">推定勝率</th>
+          <th class="col-place" data-col="place_prob_pct" data-dir="desc">複勝率</th>
+          <th class="col-idx"   data-col="adjusted_index" data-dir="desc">実力指数</th>
+          <th class="col-odds"  data-col="odds"           data-dir="asc">単勝オッズ</th>
+          <th class="col-ev"    data-col="expected_value" data-dir="desc">期待値</th>
           <th class="col-rec no-sort">推奨</th>
         </tr>
       </thead>
@@ -145,6 +146,15 @@ function fmtProb(v) {
   </div>`;
 }
 
+function fmtPlace(v) {
+  if (v === null || v === undefined) return '―';
+  const bar = Math.min(v / 95 * 100, 100);
+  return `<div class="prob-bar-wrap">
+    <span class="prob-val">${v.toFixed(1)}%</span>
+    <div class="prob-bar-bg"><div class="place-bar" style="width:${bar}%"></div></div>
+  </div>`;
+}
+
 function fmtIdx(v) {
   return (v !== null && v !== undefined) ? v.toFixed(1) : '―';
 }
@@ -190,7 +200,7 @@ function updateSortHeaders() {
 // ── Render main table ──────────────────────────────────
 function renderTable() {
   if (!_horses.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">データがありません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">データがありません</td></tr>';
     return;
   }
   tbody.innerHTML = _horses.map(h => {
@@ -205,6 +215,7 @@ function renderTable() {
       <td><span class="umaban">${h.umaban}</span></td>
       <td class="col-name">${nameCell}</td>
       <td>${fmtProb(h.win_prob_pct)}</td>
+      <td>${fmtPlace(h.place_prob_pct)}</td>
       <td>${fmtIdx(h.adjusted_index)}</td>
       <td>${fmtOdds(h.odds)}</td>
       <td>${fmtEv(h.expected_value)}</td>
