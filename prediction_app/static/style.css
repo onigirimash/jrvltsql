@@ -345,3 +345,85 @@ tbody tr.recommended td.col-name .horse-link { color: #1b5e20; }
 thead th.col-run     { width: 46px; }
 thead th.col-adj-ev  { width: 96px; }
 thead th.col-rank    { width: 64px; }
+
+/* ── AI分析ボタン ── */
+.ai-btn {
+  background: #6a1b9a;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  padding: .55rem 1.3rem;
+  font-size: .9rem;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: .02em;
+  transition: background .15s;
+}
+.ai-btn:hover    { background: #8e24aa; }
+.ai-btn:disabled { background: #bdbdbd; cursor: default; }
+.ai-cache-hint   { font-size: .75rem; color: #888; margin-left: .6rem; }
+
+/* ── AI分析カード ── */
+.ai-card {
+  background: #fff;
+  border: 1px solid #e1d5f0;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(106,27,154,.08);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1rem;
+  line-height: 1.75;
+  font-size: .88rem;
+  color: #333;
+}
+
+/* カード内コンテンツ */
+.ai-content    { }
+.ai-section-title {
+  font-size: .95rem;
+  font-weight: 700;
+  color: #4a148c;
+  border-bottom: 2px solid #e8d5f5;
+  padding-bottom: .25rem;
+  margin: 1rem 0 .45rem;
+}
+.ai-section-title:first-child { margin-top: 0; }
+
+.ai-line { margin: .2rem 0; }
+.ai-list { margin: .25rem 0 .25rem 1.2rem; padding: 0; }
+.ai-list li { margin: .15rem 0; }
+
+/* 推奨記号 */
+.ai-rec-circle  { color: #c62828; font-weight: 700; font-size: 1.05em; }
+.ai-rec-maru    { color: #1565c0; font-weight: 700; font-size: 1.05em; }
+.ai-rec-sankaku { color: #2e7d32; font-weight: 700; font-size: 1.05em; }
+
+/* ローディング */
+.ai-loading {
+  text-align: center;
+  color: #888;
+  padding: 1.5rem 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  font-size: .88rem;
+}
+.ai-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #d1b3e8;
+  border-top-color: #6a1b9a;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* エラー */
+.ai-error {
+  color: #c0392b;
+  background: #fdecea;
+  border-radius: 6px;
+  padding: .65rem .9rem;
+  font-size: .85rem;
+}
