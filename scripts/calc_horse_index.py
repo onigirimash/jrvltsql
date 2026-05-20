@@ -34,6 +34,7 @@ Usage:
     --years N              直近N年のデータを使用（デフォルト: 3）
     --max-iter N           イテレーション上限（デフォルト: 20）
     --converge THRESHOLD   収束閾値（デフォルト: 0.01）
+    --as-of-date YYYYMMDD  この日付以降のレースを除外（ルックアヘッド防止。省略時は今日）
     --pg-host / --pg-port / --pg-database / --pg-user / --pg-password
 """
 
@@ -74,6 +75,8 @@ JOIN nl_performance p
   AND p.umaban::int  = se.umaban
 WHERE (se.year > :cutoff_year
     OR (se.year = :cutoff_year AND se.monthday >= :cutoff_monthday))
+  AND (se.year < :as_of_year
+    OR (se.year = :as_of_year AND se.monthday <= :as_of_monthday))
   AND se.jyocd BETWEEN '01' AND '10'
   AND se.kakuteijyuni >= 1
   AND se.kettonum IS NOT NULL
@@ -123,10 +126,9 @@ def _connect(args) -> pg8000.native.Connection:
     )
 
 
-def _cutoff_year_monthday(years: int) -> tuple[int, int]:
-    """直近N年の起点日を (year, monthday) 形式で返す。"""
-    today = date.today()
-    cutoff = today.replace(year=today.year - years)
+def _cutoff_year_monthday(years: int, as_of: date) -> tuple[int, int]:
+    """as_of日からN年前の起点日を (year, monthday) 形式で返す。"""
+    cutoff = as_of.replace(year=as_of.year - years)
     return cutoff.year, cutoff.month * 100 + cutoff.day
 
 
@@ -242,15 +244,22 @@ def calc_horse_index(
     years: int,
     max_iter: int,
     converge_threshold: float,
+    as_of: date | None = None,
 ) -> dict:
     """馬別実力指数を計算して nl_horse_index へ保存する。"""
-    cutoff_year, cutoff_monthday = _cutoff_year_monthday(years)
-    print(f"  対象期間: {cutoff_year}/{cutoff_monthday:04d} 以降（直近{years}年）")
+    if as_of is None:
+        as_of = date.today()
+    as_of_year     = as_of.year
+    as_of_monthday = as_of.month * 100 + as_of.day
+    cutoff_year, cutoff_monthday = _cutoff_year_monthday(years, as_of)
+    print(f"  対象期間: {cutoff_year}/{cutoff_monthday:04d}〜{as_of_year}/{as_of_monthday:04d}（直近{years}年）")
 
     rows = conn.run(
         _SQL_FETCH,
         cutoff_year=cutoff_year,
         cutoff_monthday=cutoff_monthday,
+        as_of_year=as_of_year,
+        as_of_monthday=as_of_monthday,
     )
     print(f"  取得: {len(rows)} 行")
 
@@ -288,12 +297,19 @@ def main() -> None:
                         help='イテレーション上限（デフォルト: 20）')
     parser.add_argument('--converge', type=float, default=0.01, metavar='THRESHOLD',
                         help='収束閾値（デフォルト: 0.01）')
+    parser.add_argument('--as-of-date', default=None, metavar='YYYYMMDD',
+                        help='この日付以降のレースを除外（ルックアヘッド防止。省略時は今日）')
     parser.add_argument('--pg-host',     default=os.environ.get('POSTGRES_HOST',     'localhost'))
     parser.add_argument('--pg-port',     default=os.environ.get('POSTGRES_PORT',     '5432'))
     parser.add_argument('--pg-database', default=os.environ.get('POSTGRES_DATABASE', 'keiba'))
     parser.add_argument('--pg-user',     default=os.environ.get('POSTGRES_USER',     'postgres'))
     parser.add_argument('--pg-password', default=os.environ.get('POSTGRES_PASSWORD', ''))
     args = parser.parse_args()
+
+    as_of = None
+    if args.as_of_date:
+        d = args.as_of_date.replace('-', '')
+        as_of = date(int(d[:4]), int(d[4:6]), int(d[6:8]))
 
     conn = _connect(args)
     try:
@@ -302,6 +318,7 @@ def main() -> None:
             years=args.years,
             max_iter=args.max_iter,
             converge_threshold=args.converge,
+            as_of=as_of,
         )
         print(f"\n完了: {stats['horses']} 馬×区分を処理、"
               f"{stats['rows']} 件を nl_horse_index へ保存しました。")

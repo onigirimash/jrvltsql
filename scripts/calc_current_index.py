@@ -33,10 +33,11 @@ nl_performance の perf_index を norm_index スケール（avg=50, std=10）に
 Usage:
     py -3.12-32 scripts/calc_current_index.py [options]
 
-    --decay N       減衰定数（日数、デフォルト: 180）
-    --recent-n N    直近N走（デフォルト: 5）
-    --best-n N      キャリアベストN走（デフォルト: 3）
-    --best-years N  キャリアベスト対象年数（デフォルト: 2）
+    --decay N           減衰定数（日数、デフォルト: 180）
+    --recent-n N        直近N走（デフォルト: 5）
+    --best-n N          キャリアベストN走（デフォルト: 3）
+    --best-years N      キャリアベスト対象年数（デフォルト: 2）
+    --as-of-date YYYYMMDD  この日付以降のレースを除外（ルックアヘッド防止。省略時は今日）
     --pg-host / --pg-port / --pg-database / --pg-user / --pg-password
 """
 
@@ -52,14 +53,16 @@ import pg8000.native
 # SQL
 # ──────────────────────────────────────────────────────
 
-# perf_index のグローバル統計（正規化に使用）
+# perf_index のグローバル統計（正規化に使用）— as_of_date 以前に限定
 _SQL_PERF_STATS = """
 SELECT AVG(perf_index), STDDEV_POP(perf_index)
 FROM nl_performance
 WHERE perf_index IS NOT NULL
+  AND (year < :as_of_year
+    OR (year = :as_of_year AND monthday <= :as_of_monthday))
 """
 
-# 中央競馬の全出走馬 × perf_index を取得（日付制限なし）
+# 中央競馬の全出走馬 × perf_index を取得（as_of_date 以前）
 _SQL_FETCH = """
 SELECT
     TRIM(se.kettonum)          AS kettonum,
@@ -85,6 +88,8 @@ WHERE se.jyocd BETWEEN '01' AND '10'
   AND se.kettonum IS NOT NULL
   AND se.kettonum <> ''
   AND p.perf_index IS NOT NULL
+  AND (se.year < :as_of_year
+    OR (se.year = :as_of_year AND se.monthday <= :as_of_monthday))
 ORDER BY se.kettonum, se.year DESC, se.monthday DESC
 """
 
@@ -225,11 +230,15 @@ def calc_current_index(
     recent_n: int,
     best_n: int,
     best_years: int,
+    as_of: date | None = None,
 ) -> dict:
-    today = date.today()
+    today = as_of if as_of is not None else date.today()
+    as_of_year     = today.year
+    as_of_monthday = today.month * 100 + today.day
 
     # perf_index のグローバル統計を取得（norm_index スケールへの正規化に使用）
-    stat_row = conn.run(_SQL_PERF_STATS)[0]
+    stat_row = conn.run(_SQL_PERF_STATS,
+                        as_of_year=as_of_year, as_of_monthday=as_of_monthday)[0]
     perf_mean = float(stat_row[0])
     perf_std  = float(stat_row[1])
     if perf_std == 0:
@@ -237,8 +246,8 @@ def calc_current_index(
     print(f"  perf_index 統計: mean={perf_mean:.4f}  std={perf_std:.4f}")
     print(f"  正規化式: (perf_index - {perf_mean:.4f}) / {perf_std:.4f} × 10 + 50")
 
-    # 全出走履歴を取得
-    rows = conn.run(_SQL_FETCH)
+    # 全出走履歴を取得（as_of_date 以前）
+    rows = conn.run(_SQL_FETCH, as_of_year=as_of_year, as_of_monthday=as_of_monthday)
     print(f"  取得: {len(rows)} 行")
 
     # (kettonum, dist_cat, surface) → [(race_date, norm_scaled)] 日付降順
@@ -295,12 +304,19 @@ def main() -> None:
                         help='キャリアベストN走（デフォルト: 3）')
     parser.add_argument('--best-years', type=int,   default=2,     metavar='N',
                         help='キャリアベスト対象年数（デフォルト: 2）')
+    parser.add_argument('--as-of-date', default=None, metavar='YYYYMMDD',
+                        help='この日付以降のレースを除外（ルックアヘッド防止。省略時は今日）')
     parser.add_argument('--pg-host',     default=os.environ.get('POSTGRES_HOST',     'localhost'))
     parser.add_argument('--pg-port',     default=os.environ.get('POSTGRES_PORT',     '5432'))
     parser.add_argument('--pg-database', default=os.environ.get('POSTGRES_DATABASE', 'keiba'))
     parser.add_argument('--pg-user',     default=os.environ.get('POSTGRES_USER',     'postgres'))
     parser.add_argument('--pg-password', default=os.environ.get('POSTGRES_PASSWORD', ''))
     args = parser.parse_args()
+
+    as_of = None
+    if args.as_of_date:
+        d = args.as_of_date.replace('-', '')
+        as_of = date(int(d[:4]), int(d[4:6]), int(d[6:8]))
 
     conn = _connect(args)
     try:
@@ -312,6 +328,7 @@ def main() -> None:
             recent_n=args.recent_n,
             best_n=args.best_n,
             best_years=args.best_years,
+            as_of=as_of,
         )
         print(f"\n完了: {stats['updated']} 件を更新、"
               f"{stats['no_races']} 件はレースなしのため NULL。")
