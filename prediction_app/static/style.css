@@ -80,7 +80,7 @@ header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: .02em; }
   -webkit-overflow-scrolling: touch;
 }
 
-table { width: 100%; border-collapse: collapse; }
+table { width: 100%; min-width: 900px; border-collapse: collapse; }
 
 thead th {
   background: #1a3a5c;
@@ -99,14 +99,14 @@ thead th.sort-desc::after { content: ' ▼'; }
 thead th.no-sort { cursor: default; }
 thead th.no-sort:hover { background: #1a3a5c; }
 
-thead th.col-num    { width: 52px; }
-thead th.col-name   { text-align: left; min-width: 110px; }
-thead th.col-prob   { width: 90px; }
-thead th.col-place  { width: 90px; }
-thead th.col-idx    { width: 82px; }
-thead th.col-odds   { width: 76px; }
-thead th.col-ev     { width: 88px; }
-thead th.col-rec    { width: 58px; }
+thead th.col-num    { width: 44px; }
+thead th.col-name   { text-align: left; min-width: 100px; }
+thead th.col-prob   { width: 80px; }
+thead th.col-place  { width: 80px; }
+thead th.col-idx    { width: 72px; }
+thead th.col-odds   { width: 70px; }
+thead th.col-ev     { width: 78px; }
+thead th.col-rec    { width: 44px; }
 
 tbody td {
   padding: .55rem .75rem;
@@ -343,11 +343,12 @@ tbody tr.recommended td.col-name .horse-link { color: #1b5e20; }
 .rank-badge.rank-3 { background: #d7ccc8; color: #4e342e; }
 
 /* ── Column widths ── */
-thead th.col-run        { width: 46px; }
-thead th.col-adj-ev     { width: 96px; }
-thead th.col-rank       { width: 64px; }
-thead th.col-place-odds { width: 104px; }
-thead th.col-place-ev   { width: 88px; }
+/* 合計 ~900px: 44+100+40+80+80+88+44+72+70+92+78+78+58 = 924px */
+thead th.col-run        { width: 40px; }
+thead th.col-adj-ev     { width: 88px; }
+thead th.col-rank       { width: 58px; }
+thead th.col-place-odds { width: 92px; }
+thead th.col-place-ev   { width: 78px; }
 
 /* ══════════════════════════════════════════════════
    スマホ向けレスポンシブ（640px 以下）
@@ -368,15 +369,17 @@ thead th.col-place-ev   { width: 88px; }
   .bias-group select,
   .bias-group input[type="number"] { min-width: 90px; }
 
-  /* テーブル: 最低幅を確保してスクロール（13列→9列表示） */
-  table { min-width: 560px; }
+  /* テーブル: 常時表示7列のみ（44+100+40+80+80+88+44 = 476px） */
+  table { min-width: 460px; }
 
-  /* スマホでは不要な列を非表示
-     列順: 1馬番 2馬名 3脚質 4勝率 5複勝率 6実力指数 7単勝O 8複勝O 9期待値 10複勝EV 11調整EV 12順位 13推奨 */
-  thead th.col-idx,        tbody td:nth-child(6),
-  thead th.col-place-odds, tbody td:nth-child(8),
-  thead th.col-ev,         tbody td:nth-child(9),
-  thead th.col-rank,       tbody td:nth-child(12) { display: none; }
+  /* PC専用列を非表示（列順: 1馬番 2馬名 3脚質 4勝率 5複勝率 6調整EV 7推奨
+                              8実力指数 9単勝O 10複勝O 11期待値 12複勝EV 13順位） */
+  thead th.col-idx,        tbody td:nth-child(8),
+  thead th.col-odds,       tbody td:nth-child(9),
+  thead th.col-place-odds, tbody td:nth-child(10),
+  thead th.col-ev,         tbody td:nth-child(11),
+  thead th.col-place-ev,   tbody td:nth-child(12),
+  thead th.col-rank,       tbody td:nth-child(13) { display: none; }
 
   /* 確率バーは非表示（数値だけ表示） */
   .prob-bar-bg { display: none; }

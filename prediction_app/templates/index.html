@@ -81,16 +81,16 @@
           <th class="col-num no-sort">馬番</th>
           <th class="col-name no-sort">馬名 <span style="font-size:.68rem;opacity:.7">（クリックで履歴）</span></th>
           <th class="col-run no-sort">脚質</th>
-          <th class="col-prob"    data-col="win_prob_pct"   data-dir="desc">推定勝率</th>
-          <th class="col-place"   data-col="place_prob_pct" data-dir="desc">複勝率</th>
-          <th class="col-idx"     data-col="adjusted_index" data-dir="desc">実力指数</th>
+          <th class="col-prob"      data-col="win_prob_pct"   data-dir="desc">推定勝率</th>
+          <th class="col-place"     data-col="place_prob_pct" data-dir="desc">複勝率</th>
+          <th class="col-adj-ev"    data-col="adjusted_ev"    data-dir="desc">調整後EV</th>
+          <th class="col-rec no-sort">推奨</th>
+          <th class="col-idx"       data-col="adjusted_index" data-dir="desc">実力指数</th>
           <th class="col-odds"      data-col="odds"           data-dir="asc">単勝オッズ</th>
           <th class="col-place-odds no-sort">複勝オッズ</th>
           <th class="col-ev"        data-col="expected_value" data-dir="desc">期待値</th>
           <th class="col-place-ev"  data-col="place_ev"       data-dir="desc">複勝EV</th>
-          <th class="col-adj-ev"    data-col="adjusted_ev"    data-dir="desc">調整後EV</th>
           <th class="col-rank no-sort">推奨順位</th>
-          <th class="col-rec no-sort">推奨</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -389,14 +389,14 @@ function renderTable() {
       <td>${fmtRunningStyle(h.avg_corner_pos)}</td>
       <td>${fmtProb(h.win_prob_pct)}</td>
       <td>${fmtPlace(h.place_prob_pct)}</td>
+      <td>${fmtAdjEv(h.adjusted_ev, h.bias_score)}</td>
+      <td>${badge}</td>
       <td>${fmtIdx(h.adjusted_index)}</td>
       <td>${fmtOdds(h.odds)}</td>
       <td>${fmtPlaceOdds(h.place_odds_min, h.place_odds_max)}</td>
       <td>${fmtEv(h.expected_value)}</td>
       <td>${fmtEv(h.place_ev)}</td>
-      <td>${fmtAdjEv(h.adjusted_ev, h.bias_score)}</td>
       <td>${rankCell}</td>
-      <td>${badge}</td>
     </tr>`;
   }).join('');
 }
