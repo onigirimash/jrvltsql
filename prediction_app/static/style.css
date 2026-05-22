@@ -76,7 +76,8 @@ header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: .02em; }
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0,0,0,.08);
-  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 table { width: 100%; border-collapse: collapse; }
@@ -345,6 +346,60 @@ tbody tr.recommended td.col-name .horse-link { color: #1b5e20; }
 thead th.col-run     { width: 46px; }
 thead th.col-adj-ev  { width: 96px; }
 thead th.col-rank    { width: 64px; }
+
+/* ══════════════════════════════════════════════════
+   スマホ向けレスポンシブ（640px 以下）
+   ══════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+  /* レイアウト */
+  .container { padding: .75rem .6rem; }
+  header     { padding: .7rem .9rem; }
+  header h1  { font-size: 1rem; }
+
+  /* フィルターバー */
+  .filters { padding: .75rem .8rem; gap: .55rem; }
+  .filter-group select { min-width: 110px; font-size: .85rem; }
+
+  /* バイアスパネル */
+  .bias-panel { padding: .65rem .8rem; }
+  .bias-form  { gap: .55rem; }
+  .bias-group select,
+  .bias-group input[type="number"] { min-width: 90px; }
+
+  /* テーブル: 最低幅を確保してスクロール */
+  table { min-width: 520px; }
+
+  /* スマホでは不要な列を非表示 */
+  thead th.col-idx,  tbody td:nth-child(6),
+  thead th.col-ev,   tbody td:nth-child(8),
+  thead th.col-rank, tbody td:nth-child(10) { display: none; }
+
+  /* 確率バーは非表示（数値だけ表示） */
+  .prob-bar-bg { display: none; }
+  .prob-val    { min-width: auto; }
+
+  /* 馬番バッジを小さく */
+  .umaban { width: 24px; height: 24px; font-size: .78rem; }
+
+  /* レースバナー */
+  .race-banner { font-size: .82rem; }
+  .race-banner strong { font-size: .9rem; }
+
+  /* AI分析ボタン */
+  .ai-btn { font-size: .85rem; padding: .5rem 1rem; }
+
+  /* AI分析カード */
+  .ai-card { padding: .9rem 1rem; }
+
+  /* モーダル */
+  .modal { max-height: 92vh; }
+  .modal-body { padding: .75rem .9rem; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .history-table { min-width: 460px; }
+
+  /* 凡例は折り返し */
+  .legend { flex-wrap: wrap; gap: .6rem; }
+  .legend-item:last-child { margin-left: 0 !important; }
+}
 
 /* ── AI分析ボタン ── */
 .ai-btn {
