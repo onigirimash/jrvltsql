@@ -76,7 +76,7 @@ def get_dates():
         cur.execute("""
             SELECT DISTINCT year, monthday
             FROM nl_race_prediction
-            WHERE expected_value IS NOT NULL
+            WHERE win_prob IS NOT NULL
             ORDER BY year DESC, monthday DESC
             LIMIT 120
         """)
@@ -101,7 +101,7 @@ def get_venues(date: str = Query(..., min_length=8, max_length=8)):
             SELECT DISTINCT jyocd
             FROM nl_race_prediction
             WHERE year = %s AND monthday = %s
-              AND expected_value IS NOT NULL
+              AND win_prob IS NOT NULL
             ORDER BY jyocd
         """, (year, monthday))
         rows = to_dicts(cur)
@@ -130,7 +130,7 @@ def get_race_list(
                 SELECT DISTINCT racenum
                 FROM nl_race_prediction
                 WHERE year = %s AND monthday = %s AND jyocd = %s
-                  AND expected_value IS NOT NULL
+                  AND win_prob IS NOT NULL
             ) rp
             LEFT JOIN nl_ra ra
                 ON  ra.year     = %s
