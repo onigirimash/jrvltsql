@@ -46,10 +46,15 @@ _DEFAULT_ODDS_FACTOR  = 1.0
 # SQL
 # ──────────────────────────────────────────────────────
 
-# 対象日の odds / expected_value / is_recommended をリセット
+# 対象日の odds / expected_value / is_recommended / place odds をリセット
 _SQL_RESET = """
 UPDATE nl_race_prediction
-SET odds = NULL, expected_value = NULL, is_recommended = NULL
+SET odds           = NULL,
+    expected_value = NULL,
+    is_recommended = NULL,
+    place_odds_min = NULL,
+    place_odds_max = NULL,
+    place_ev       = NULL
 WHERE year = :year AND monthday = :monthday
 """
 
@@ -83,6 +88,33 @@ FROM (
       AND se.monthday = :monthday
       AND se.umaban   > 0
       AND COALESCE(o.tanodds, se.odds) > 0
+) src
+WHERE p.year     = :year
+  AND p.monthday = :monthday
+  AND p.jyocd    = src.jyocd
+  AND p.racenum  = src.racenum
+  AND p.umaban   = src.umaban
+"""
+
+# 複勝オッズ（fukuoddslow / fukuoddshigh）と複勝EVを更新
+# DISTINCT ON で最新 makedate の行を採用
+_SQL_UPDATE_PLACE = """
+UPDATE nl_race_prediction p
+SET place_odds_min = ROUND(src.fukuoddslow::numeric,  1),
+    place_odds_max = ROUND(src.fukuoddshigh::numeric, 1),
+    place_ev       = ROUND((p.place_prob::numeric * src.fukuoddslow::numeric - 1), 4)
+FROM (
+    SELECT DISTINCT ON (jyocd, racenum, umaban)
+        jyocd, racenum, umaban, fukuoddslow, fukuoddshigh
+    FROM nl_o1
+    WHERE year     = :year
+      AND monthday = :monthday
+      AND umaban   > 0
+      AND fukuoddslow  IS NOT NULL
+      AND fukuoddslow  > 0
+      AND fukuoddshigh IS NOT NULL
+      AND fukuoddshigh > 0
+    ORDER BY jyocd, racenum, umaban, makedate DESC
 ) src
 WHERE p.year     = :year
   AND p.monthday = :monthday
@@ -152,7 +184,7 @@ def calc_one_day(
     # リセット
     conn.run(_SQL_RESET, year=year, monthday=monthday)
 
-    # nl_o1 から odds を取得して期待値を更新
+    # nl_o1 から単勝 odds を取得して期待値を更新
     conn.run(
         _SQL_UPDATE,
         year=year,
@@ -160,6 +192,9 @@ def calc_one_day(
         factor=odds_factor,
         ev_threshold=ev_threshold,
     )
+
+    # nl_o1 から複勝 odds を取得して複勝EVを更新
+    conn.run(_SQL_UPDATE_PLACE, year=year, monthday=monthday)
 
     # サマリ集計
     summary_rows = conn.run(_SQL_SUMMARY, year=year, monthday=monthday)

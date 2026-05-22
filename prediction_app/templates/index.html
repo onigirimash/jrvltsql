@@ -84,9 +84,11 @@
           <th class="col-prob"    data-col="win_prob_pct"   data-dir="desc">推定勝率</th>
           <th class="col-place"   data-col="place_prob_pct" data-dir="desc">複勝率</th>
           <th class="col-idx"     data-col="adjusted_index" data-dir="desc">実力指数</th>
-          <th class="col-odds"    data-col="odds"           data-dir="asc">単勝オッズ</th>
-          <th class="col-ev"      data-col="expected_value" data-dir="desc">期待値</th>
-          <th class="col-adj-ev"  data-col="adjusted_ev"    data-dir="desc">調整後EV</th>
+          <th class="col-odds"      data-col="odds"           data-dir="asc">単勝オッズ</th>
+          <th class="col-place-odds no-sort">複勝オッズ</th>
+          <th class="col-ev"        data-col="expected_value" data-dir="desc">期待値</th>
+          <th class="col-place-ev"  data-col="place_ev"       data-dir="desc">複勝EV</th>
+          <th class="col-adj-ev"    data-col="adjusted_ev"    data-dir="desc">調整後EV</th>
           <th class="col-rank no-sort">推奨順位</th>
           <th class="col-rec no-sort">推奨</th>
         </tr>
@@ -305,6 +307,12 @@ function fmtPlace(v) {
 
 function fmtIdx(v) { return v != null ? v.toFixed(1) : '―'; }
 
+function fmtPlaceOdds(lo, hi) {
+  if (lo == null) return '<span class="ev-null">―</span>';
+  if (hi == null || lo === hi) return lo.toFixed(1);
+  return `${lo.toFixed(1)}<span style="color:#aaa">~</span>${hi.toFixed(1)}`;
+}
+
 function fmtPerf(v) {
   if (v == null) return '―';
   const cls  = v >= 0 ? 'perf-pos' : 'perf-neg';
@@ -346,7 +354,7 @@ function updateSortHeaders() {
 // ── Render main table ──────────────────────────────────
 function renderTable() {
   if (!_cHorses.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="empty">データがありません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="empty">データがありません</td></tr>';
     return;
   }
 
@@ -383,7 +391,9 @@ function renderTable() {
       <td>${fmtPlace(h.place_prob_pct)}</td>
       <td>${fmtIdx(h.adjusted_index)}</td>
       <td>${fmtOdds(h.odds)}</td>
+      <td>${fmtPlaceOdds(h.place_odds_min, h.place_odds_max)}</td>
       <td>${fmtEv(h.expected_value)}</td>
+      <td>${fmtEv(h.place_ev)}</td>
       <td>${fmtAdjEv(h.adjusted_ev, h.bias_score)}</td>
       <td>${rankCell}</td>
       <td>${badge}</td>
@@ -630,9 +640,12 @@ async function requestAIAnalysis() {
       win_prob_pct:   h.win_prob_pct   ?? null,
       place_prob_pct: h.place_prob_pct ?? null,
       odds:           h.odds           ?? null,
-      expected_value: h.expected_value ?? null,
-      adjusted_ev:    h.adjusted_ev    ?? null,
-      bias_score:     h.bias_score     ?? 0,
+      expected_value:  h.expected_value  ?? null,
+      adjusted_ev:     h.adjusted_ev     ?? null,
+      place_odds_min:  h.place_odds_min  ?? null,
+      place_odds_max:  h.place_odds_max  ?? null,
+      place_ev:        h.place_ev        ?? null,
+      bias_score:      h.bias_score      ?? 0,
     })),
     bias: _bias,
   };

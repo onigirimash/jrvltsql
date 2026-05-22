@@ -173,6 +173,9 @@ def get_prediction(
                 rp.odds,
                 ROUND(rp.expected_value::numeric, 3)       AS expected_value,
                 rp.is_recommended,
+                rp.place_odds_min,
+                rp.place_odds_max,
+                ROUND(rp.place_ev::numeric, 3)             AS place_ev,
                 ra.kyori,
                 LEFT(COALESCE(ra.trackcd, ''), 1)          AS surface_cd,
                 COALESCE(TRIM(ra.ryakusyo6), '')           AS race_name
@@ -240,8 +243,11 @@ def get_prediction(
             "adjusted_index": float(r["adjusted_index"]) if r["adjusted_index"] is not None else None,
             "odds":           float(r["odds"])           if r["odds"]           is not None else None,
             "expected_value": float(r["expected_value"]) if r["expected_value"] is not None else None,
-            "is_recommended": bool(r["is_recommended"])  if r["is_recommended"] is not None else False,
-            "avg_corner_pos": corner_map.get((r.get("kettonum") or "").strip()),
+            "is_recommended":  bool(r["is_recommended"])   if r["is_recommended"]  is not None else False,
+            "place_odds_min":  float(r["place_odds_min"])  if r["place_odds_min"]  is not None else None,
+            "place_odds_max":  float(r["place_odds_max"])  if r["place_odds_max"]  is not None else None,
+            "place_ev":        float(r["place_ev"])        if r["place_ev"]        is not None else None,
+            "avg_corner_pos":  corner_map.get((r.get("kettonum") or "").strip()),
         }
         for r in rows
     ]
