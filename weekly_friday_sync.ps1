@@ -93,7 +93,7 @@ $quickstart = Join-Path $root "scripts\quickstart.py"
 function Invoke-Step {
     param([string]$Label, [string]$Script, [string[]]$Dates)
     Write-Log "=== $Label START ==="
-    if (-not (Test-Path $Script)) { Write-Log "$Label: $Script not found - skip" "WARN"; return }
+    if (-not (Test-Path $Script)) { Write-Log "${Label}: $Script not found - skip" "WARN"; return }
     $anyFail = $false
     foreach ($d in $Dates) {
         Write-Log "[$Label] $d start"

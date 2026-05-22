@@ -82,7 +82,7 @@ LEFT JOIN nl_horse_index hi
 WHERE se.year     = :year
   AND se.monthday = :monthday
   AND se.jyocd BETWEEN '01' AND '10'
-  AND se.kakuteijyuni >= 1
+  AND (se.kakuteijyuni >= 1 OR COALESCE(se.ijyocd, '0') = '0')
   AND se.kettonum IS NOT NULL
   AND se.kettonum <> ''
 ORDER BY se.jyocd, se.racenum, se.umaban
