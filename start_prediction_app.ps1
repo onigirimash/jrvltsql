@@ -1,16 +1,16 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    prediction_app を起動し ngrok でスマホからアクセス可能にする
+    Start prediction_app and expose it via ngrok for mobile access
 .DESCRIPTION
-    1. uvicorn で prediction_app を port 8001 で起動
-    2. ngrok で HTTP トンネルを作成
-    3. スマホアクセス用の公開 URL をコンソールに表示
-    Ctrl+C でこのウィンドウを閉じると uvicorn と ngrok も停止します
+    1. Launch prediction_app with uvicorn on port 8001
+    2. Create an ngrok HTTP tunnel
+    3. Display the public URL in the console
+    Press Ctrl+C to stop both uvicorn and ngrok.
 .NOTES
-    ngrok 認証済みであること（ngrok authtoken <TOKEN> で設定）
-    https://dashboard.ngrok.com/ でトークンを取得できます
-    ANTHROPIC_API_KEY が設定されていれば AI 分析も利用可能
+    ngrok must be authenticated: run "ngrok authtoken <TOKEN>" first.
+    Get your token at https://dashboard.ngrok.com/
+    Set ANTHROPIC_API_KEY to enable AI analysis.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -19,16 +19,16 @@ $port = 8001
 
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "  競馬予想ツール  prediction_app + ngrok 起動" -ForegroundColor Cyan
+Write-Host "  prediction_app + ngrok launcher" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── PostgreSQL パスワード ──────────────────────────────────────────────────────
+# -- PostgreSQL password ------------------------------------------------------
 $pgPassword = [Environment]::GetEnvironmentVariable('PGPASSWORD', 'User')
 if ([string]::IsNullOrEmpty($pgPassword)) { $pgPassword = $env:PGPASSWORD }
 if ([string]::IsNullOrEmpty($pgPassword)) {
-    Write-Host "[ERROR] PGPASSWORD が設定されていません" -ForegroundColor Red
-    Write-Host "        register_weekly_friday_task.ps1 を実行して設定してください"
+    Write-Host "[ERROR] PGPASSWORD is not set." -ForegroundColor Red
+    Write-Host "        Run register_weekly_friday_task.ps1 to configure it."
     exit 1
 }
 
@@ -41,36 +41,36 @@ $env:PYTHONIOENCODING  = "utf-8"
 
 Set-Location $root
 
-# ── ngrok の認証確認 ───────────────────────────────────────────────────────────
+# -- ngrok availability check -------------------------------------------------
 $ngrokCmd = Get-Command ngrok -ErrorAction SilentlyContinue
 if (-not $ngrokCmd) {
-    Write-Host "[ERROR] ngrok が見つかりません。winget install ngrok でインストールしてください" -ForegroundColor Red
+    Write-Host "[ERROR] ngrok not found. Install with: winget install ngrok" -ForegroundColor Red
     exit 1
 }
 
 $ngrokCfg = "$env:USERPROFILE\AppData\Local\ngrok\ngrok.yml"
 if (-not (Test-Path $ngrokCfg) -or -not (Select-String "authtoken" $ngrokCfg -Quiet)) {
-    Write-Host "[ERROR] ngrok の認証トークンが設定されていません" -ForegroundColor Red
-    Write-Host "        https://dashboard.ngrok.com/ でトークンを取得し"
-    Write-Host "        「ngrok authtoken <YOUR_TOKEN>」を実行してください"
+    Write-Host "[ERROR] ngrok authtoken is not configured." -ForegroundColor Red
+    Write-Host "        Get a token at https://dashboard.ngrok.com/ and run:"
+    Write-Host "        ngrok authtoken <YOUR_TOKEN>"
     exit 1
 }
 
-# ── ポートの使用確認（既存プロセスの停止） ────────────────────────────────────
+# -- Kill any process already listening on the port --------------------------
 $occupied = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
 if ($occupied) {
-    Write-Host "[INFO] ポート $port は既に使用中です。既存プロセスを確認します..." -ForegroundColor Yellow
+    Write-Host "[INFO] Port $port is in use. Stopping existing process..." -ForegroundColor Yellow
     $pid_ = ($occupied | Select-Object -First 1).OwningProcess
     $proc = Get-Process -Id $pid_ -ErrorAction SilentlyContinue
     if ($proc) {
-        Write-Host "       PID $pid_ ($($proc.ProcessName)) を停止します"
+        Write-Host "       Stopping PID $pid_ ($($proc.ProcessName))"
         Stop-Process -Id $pid_ -Force -ErrorAction SilentlyContinue
         Start-Sleep 1
     }
 }
 
-# ── uvicorn 起動 ───────────────────────────────────────────────────────────────
-Write-Host "[1/3] uvicorn 起動中 (port $port)..." -ForegroundColor Yellow
+# -- Start uvicorn ------------------------------------------------------------
+Write-Host "[1/3] Starting uvicorn on port $port ..." -ForegroundColor Yellow
 
 $uvicornArgs = @(
     "-3.12-32", "-m", "uvicorn",
@@ -80,7 +80,7 @@ $uvicornArgs = @(
 )
 $uvicornProc = Start-Process "py" -ArgumentList $uvicornArgs -PassThru -WindowStyle Minimized
 
-# uvicorn の起動を待つ（最大20秒）
+# Wait up to 20 seconds for uvicorn to respond
 $uvicornReady = $false
 for ($i = 1; $i -le 20; $i++) {
     Start-Sleep 1
@@ -92,21 +92,21 @@ for ($i = 1; $i -le 20; $i++) {
 }
 
 if ($uvicornReady) {
-    Write-Host "  uvicorn 起動完了 (PID: $($uvicornProc.Id))" -ForegroundColor Green
+    Write-Host "  uvicorn ready (PID: $($uvicornProc.Id))" -ForegroundColor Green
 } else {
-    Write-Host "  [WARN] uvicorn の応答確認がタイムアウト — 起動を続行します" -ForegroundColor Yellow
+    Write-Host "  [WARN] uvicorn health check timed out -- continuing anyway" -ForegroundColor Yellow
 }
 
-# ── ngrok トンネル作成 ────────────────────────────────────────────────────────
-Write-Host "[2/3] ngrok トンネル作成中..." -ForegroundColor Yellow
+# -- Start ngrok tunnel -------------------------------------------------------
+Write-Host "[2/3] Creating ngrok tunnel ..." -ForegroundColor Yellow
 
-# 既存 ngrok プロセスを停止してクリーンな状態で起動
+# Kill any stale ngrok process before starting fresh
 Get-Process ngrok -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep 1
 
 $ngrokProc = Start-Process "ngrok" -ArgumentList @("http", "$port") -PassThru -WindowStyle Minimized
 
-# ngrok Web API からトンネル URL を取得（最大20秒）
+# Poll ngrok local API for the public URL (up to 20 seconds)
 $ngrokUrl = $null
 for ($i = 1; $i -le 20; $i++) {
     Start-Sleep 1
@@ -117,54 +117,52 @@ for ($i = 1; $i -le 20; $i++) {
     } catch { }
 }
 
-# ── 公開 URL 表示 ─────────────────────────────────────────────────────────────
+# -- Display public URL -------------------------------------------------------
 Write-Host ""
 if ($ngrokUrl) {
-    Write-Host "[3/3] 公開 URL 取得完了" -ForegroundColor Green
+    Write-Host "[3/3] Public URL ready" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  ╔══════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║  スマホからアクセス（外部公開 URL）:                ║" -ForegroundColor Cyan
-    Write-Host "  ║" -ForegroundColor Cyan -NoNewline
-    Write-Host ("  " + $ngrokUrl.PadRight(51)) -ForegroundColor Green -NoNewline
-    Write-Host "║" -ForegroundColor Cyan
-    Write-Host "  ║                                                      ║" -ForegroundColor Cyan
-    Write-Host "  ║  ローカル: http://127.0.0.1:$port                     ║" -ForegroundColor Cyan
-    Write-Host "  ╚══════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
+    Write-Host "  |  Open on your phone:                                 |" -ForegroundColor Cyan
+    Write-Host "  |  $ngrokUrl" -ForegroundColor Green
+    Write-Host "  |                                                      |" -ForegroundColor Cyan
+    Write-Host "  |  Local: http://127.0.0.1:$port                        |" -ForegroundColor Cyan
+    Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  QRコード・詳細: http://127.0.0.1:4040 (ngrok 管理画面)" -ForegroundColor Gray
+    Write-Host "  ngrok dashboard (QR code etc.): http://127.0.0.1:4040" -ForegroundColor Gray
 } else {
-    Write-Host "[WARN] ngrok URL の自動取得に失敗しました" -ForegroundColor Yellow
-    Write-Host "       ブラウザで http://127.0.0.1:4040 を開いて URL を確認してください"
+    Write-Host "[WARN] Could not retrieve ngrok URL automatically." -ForegroundColor Yellow
+    Write-Host "       Open http://127.0.0.1:4040 in your browser to find the URL."
 }
 
 Write-Host ""
-Write-Host "  実行中... Ctrl+C でサーバーを停止します" -ForegroundColor Gray
+Write-Host "  Running -- press Ctrl+C to stop" -ForegroundColor Gray
 Write-Host ""
 
-# ── 実行中 / 終了待ち ─────────────────────────────────────────────────────────
+# -- Wait loop / cleanup on exit ----------------------------------------------
 try {
     while ($true) {
         Start-Sleep 10
         if ($uvicornProc.HasExited) {
-            Write-Host "[WARN] uvicorn が予期せず終了しました (exit: $($uvicornProc.ExitCode))" -ForegroundColor Yellow
+            Write-Host "[WARN] uvicorn exited unexpectedly (code: $($uvicornProc.ExitCode))" -ForegroundColor Yellow
             break
         }
         if ($ngrokProc.HasExited) {
-            Write-Host "[WARN] ngrok が予期せず終了しました (exit: $($ngrokProc.ExitCode))" -ForegroundColor Yellow
+            Write-Host "[WARN] ngrok exited unexpectedly (code: $($ngrokProc.ExitCode))" -ForegroundColor Yellow
             break
         }
     }
 } finally {
     Write-Host ""
-    Write-Host "シャットダウン中..." -ForegroundColor Yellow
+    Write-Host "Shutting down ..." -ForegroundColor Yellow
     if (-not $uvicornProc.HasExited) {
         Stop-Process -Id $uvicornProc.Id -Force -ErrorAction SilentlyContinue
-        Write-Host "  uvicorn 停止 (PID: $($uvicornProc.Id))" -ForegroundColor Gray
+        Write-Host "  uvicorn stopped (PID: $($uvicornProc.Id))" -ForegroundColor Gray
     }
     if (-not $ngrokProc.HasExited) {
         Stop-Process -Id $ngrokProc.Id  -Force -ErrorAction SilentlyContinue
-        Write-Host "  ngrok 停止  (PID: $($ngrokProc.Id))" -ForegroundColor Gray
+        Write-Host "  ngrok stopped  (PID: $($ngrokProc.Id))" -ForegroundColor Gray
     }
-    Write-Host "停止完了" -ForegroundColor Green
+    Write-Host "Done." -ForegroundColor Green
     Write-Host ""
 }
