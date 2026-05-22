@@ -6,14 +6,16 @@
 PCI（Pace Change Index）と脚質から展開の恩恵/損失を秒/ハロン換算し
 nl_performance.pace_dev へ UPDATE する。
 
-PCI の計算式:
-  前半Ave-3F = (走破タイム - 上がり3F) × 600 ÷ (距離 - 600)
-  PCI = 上がり3F ÷ (前半Ave-3F + 上がり3F) × 100
-  ※PCI < 47 : ハイペース / PCI 47-53 : ミドル / PCI > 53 : スロー
+PCI の計算式（レース単位）:
+  avg_run_sec = 同レース完走馬の平均走破タイム（秒換算）
+  前半Ave-3F  = (avg_run_sec - 上がり3F) × 600 ÷ (距離 - 600)
+  race_pci    = 上がり3F ÷ (前半Ave-3F + 上がり3F) × 100
+  ※race_pci > 50 : ハイペース（前半速い/上がり遅い）
+  ※race_pci < 48 : スロー    （前半遅い/上がり速い）
 
 補正値の計算式:
-  ハイペース(PCI<47) × 逃げ先行(脚質1,2): pace_dev = -(47-PCI) × 0.02 / ハロン数
-  スロー(PCI>53) × 差し追込(脚質3,4)   : pace_dev = -(PCI-53) × 0.02 / ハロン数
+  ハイペース(PCI>50) × 逃げ先行(脚質1,2): pace_dev = -(PCI-50) × 0.02 / ハロン数
+  スロー(PCI<48)     × 差し追込(脚質3,4): pace_dev = -(48-PCI) × 0.02 / ハロン数
   それ以外                               : pace_dev = 0
 
 脚質の導出:
@@ -27,11 +29,12 @@ PCI の計算式:
   コーナー順位がすべて0のレース（直線コース等）は pace_dev = 0。
 
 データソース:
-  走破タイム : nl_se.time（MMSS.T形式）
+  走破タイム : nl_se.time（MMSS.T形式）— レース平均に使用
   上がり3F   : nl_ra.haron3l（秒）
   距離       : nl_ra.kyori（m）
   コーナー順位: nl_se.jyuni2c / jyuni3c / jyuni4c
   完走頭数   : nl_se.kakuteijyuni >= 1 の COUNT（レース単位集計）
+  ※race_pci はレース全体の平均走破タイムから算出し全馬に適用する
 
 Usage:
     py -3.12-32 scripts/calc_pace_correction.py [options]
@@ -53,14 +56,15 @@ import pg8000.native
 # ──────────────────────────────────────────────────────
 
 _STYLE_COEFF = 0.02   # 秒/PCI点
-_PCI_HI      = 47.0   # ハイペース閾値
-_PCI_SL      = 53.0   # スロー閾値
+_PCI_HI      = 50.0   # ハイペース閾値（PCI > 50 = 前半速い = ハイペース）
+_PCI_SL      = 48.0   # スロー閾値    （PCI < 48 = 前半遅い = スロー）
 
 # ──────────────────────────────────────────────────────
 # SQL
 # ──────────────────────────────────────────────────────
 
-# 対象日の全完走馬（コーナー順位・haron3l 付き）
+# 対象日の全完走馬（コーナー順位・haron3l・race_pci 付き）
+# race_pci: レース単位の平均走破タイムから計算したPCI（全馬共通）
 # finisher_count: 同一レースの確定着順馬数（脚質閾値の基準）
 _SQL_TARGET = """
 WITH race_finishers AS (
@@ -71,6 +75,16 @@ WITH race_finishers AS (
     WHERE year = :year AND monthday = :monthday
       AND kakuteijyuni >= 1
     GROUP BY year, monthday, jyocd, kaiji, nichiji, racenum
+),
+race_avg AS (
+    -- レース単位の平均走破タイム（秒換算）
+    SELECT
+        year, monthday, jyocd, kaiji, nichiji, racenum,
+        AVG(FLOOR(time / 100) * 60 + MOD(time::numeric, 100)) AS avg_run_sec
+    FROM nl_se
+    WHERE year = :year AND monthday = :monthday
+      AND kakuteijyuni >= 1 AND time > 0
+    GROUP BY year, monthday, jyocd, kaiji, nichiji, racenum
 )
 SELECT
     se.year,
@@ -80,13 +94,22 @@ SELECT
     se.nichiji,
     se.racenum,
     se.umaban,
-    FLOOR(se.time / 100) * 60 + MOD(se.time::numeric, 100) AS run_sec,
     se.jyuni2c,
     se.jyuni3c,
     se.jyuni4c,
     ra.haron3l,
     ra.kyori,
-    rf.finisher_count
+    rf.finisher_count,
+    CASE
+        WHEN ra.haron3l > 0
+         AND ra.kyori > 600
+         AND ravg.avg_run_sec > ra.haron3l
+        THEN ra.haron3l
+             / ((ravg.avg_run_sec - ra.haron3l) * 600.0 / (ra.kyori - 600)
+                + ra.haron3l)
+             * 100.0
+        ELSE NULL
+    END AS race_pci
 FROM nl_se se
 JOIN nl_ra ra
   ON  ra.year     = se.year
@@ -102,6 +125,13 @@ JOIN race_finishers rf
   AND rf.kaiji    = se.kaiji
   AND rf.nichiji  = se.nichiji
   AND rf.racenum  = se.racenum
+JOIN race_avg ravg
+  ON  ravg.year     = se.year
+  AND ravg.monthday = se.monthday
+  AND ravg.jyocd    = se.jyocd
+  AND ravg.kaiji    = se.kaiji
+  AND ravg.nichiji  = se.nichiji
+  AND ravg.racenum  = se.racenum
 WHERE ra.year     = :year
   AND ra.monthday = :monthday
   AND ra.jyocd BETWEEN '01' AND '10'
@@ -186,33 +216,15 @@ def _derive_running_style(
         return '4'
 
 
-def _calc_pci(run_sec: float, haron3l: float, kyori: int) -> float | None:
-    """
-    PCI（Pace Change Index）を計算する。
-
-    Returns:
-        PCI 値（0〜100 の範囲）, 計算不可の場合は None
-    """
-    if not haron3l or haron3l <= 0 or kyori <= 600:
-        return None
-    if run_sec <= haron3l:
-        return None
-    zenhan_ave = (run_sec - haron3l) * 600.0 / (kyori - 600)
-    total = zenhan_ave + haron3l
-    if total <= 0:
-        return None
-    return haron3l / total * 100.0
-
-
 def _calc_pace_dev(pci: float | None, style: str | None, furlongs: float) -> float:
     """展開補正値を計算する。補正対象外は 0.0 を返す。"""
     if pci is None or style is None or furlongs <= 0:
         return 0.0
-    if style in ('1', '2') and pci < _PCI_HI:      # 逃げ・先行 × ハイペース
-        pace_gap = _PCI_HI - pci
+    if style in ('1', '2') and pci > _PCI_HI:      # 逃げ・先行 × ハイペース
+        pace_gap = pci - _PCI_HI
         return round(-(pace_gap * _STYLE_COEFF / furlongs), 3)
-    elif style in ('3', '4') and pci > _PCI_SL:     # 差し・追込 × スロー
-        pace_gap = pci - _PCI_SL
+    elif style in ('3', '4') and pci < _PCI_SL:    # 差し・追込 × スロー
+        pace_gap = _PCI_SL - pci
         return round(-(pace_gap * _STYLE_COEFF / furlongs), 3)
     return 0.0
 
@@ -245,25 +257,24 @@ def calc_one_day(
 
     for row in rows:
         (year_h, monthday_h, jyocd, kaiji, nichiji, racenum, umaban,
-         run_sec_raw, jyuni2c, jyuni3c, jyuni4c,
-         haron3l, kyori_raw, finisher_count) = row
+         jyuni2c, jyuni3c, jyuni4c,
+         haron3l, kyori_raw, finisher_count, race_pci_raw) = row
 
-        run_sec   = float(run_sec_raw)
-        kyori     = int(kyori_raw)
-        furlongs  = kyori / 200.0
+        kyori    = int(kyori_raw)
+        furlongs = kyori / 200.0
+        race_pci = float(race_pci_raw) if race_pci_raw is not None else None
 
         style = _derive_running_style(
             int(jyuni4c or 0), int(jyuni3c or 0), int(jyuni2c or 0),
             int(finisher_count),
         )
-        pci = _calc_pci(run_sec, float(haron3l) if haron3l else None, kyori)
 
         if style is None:
             no_style += 1
-        if pci is None:
+        if race_pci is None:
             no_pci += 1
 
-        pace_dev = _calc_pace_dev(pci, style, furlongs)
+        pace_dev = _calc_pace_dev(race_pci, style, furlongs)
 
         # pace_dev=0 は RESET 済みのためスキップ（UPDATE 負荷削減）
         if pace_dev == 0.0:
@@ -285,7 +296,7 @@ def calc_one_day(
     if no_style:
         print(f"  {date_str}: 脚質算出不可（直線コース等）{no_style} 件 → pace_dev=0")
     if no_pci:
-        print(f"  {date_str}: PCI算出不可（haron3l未設定等）{no_pci} 件 → pace_dev=0")
+        print(f"  {date_str}: race_pci算出不可（haron3l未設定等）{no_pci} 件 → pace_dev=0")
 
     return {'total': total, 'nonzero': nonzero}
 
