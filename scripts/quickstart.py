@@ -2048,6 +2048,18 @@ class QuickstartRunner:
         if self.settings.get('no_difn'):
             specs = [(s, d, o) for s, d, o in specs if s != 'DIFN']
 
+        # --no-toku: TOKUスペックを除外
+        if self.settings.get('no_toku'):
+            specs = [(s, d, o) for s, d, o in specs if s != 'TOKU']
+
+        # --no-tcvn: TCVNスペックを除外
+        if self.settings.get('no_tcvn'):
+            specs = [(s, d, o) for s, d, o in specs if s != 'TCVN']
+
+        # --no-rcvn: RCVNスペックを除外
+        if self.settings.get('no_rcvn'):
+            specs = [(s, d, o) for s, d, o in specs if s != 'RCVN']
+
         return specs
 
     def _should_fetch_realtime(self) -> bool:
@@ -3382,6 +3394,12 @@ def main():
                         help="取得するオッズ種別をカンマ区切りで指定 (例: o1,o2 → 単勝複勝・馬連のみ。未指定時は全種別)")
     parser.add_argument("--no-difn", action="store_true",
                         help="DIFNスペック（蓄積系ソフト用蓄積情報）を除外（大容量バックフィル時に使用）")
+    parser.add_argument("--no-toku", action="store_true",
+                        help="TOKUスペック（特別登録馬）を除外（水曜実績取り込み時に使用）")
+    parser.add_argument("--no-tcvn", action="store_true",
+                        help="TCVNスペック（調教師変更情報）を除外（水曜実績取り込み時に使用）")
+    parser.add_argument("--no-rcvn", action="store_true",
+                        help="RCVNスペック（騎手変更情報）を除外（水曜実績取り込み時に使用）")
     parser.add_argument("--no-setup-mode", action="store_true",
                         help="option=4（セットアップモード）への自動切替を無効化。ダイアログを表示しないがやや遅い")
     parser.add_argument("--no-monitor", action="store_true",
@@ -3497,6 +3515,11 @@ def main():
 
         # DIFN除外
         settings['no_difn'] = args.no_difn
+
+        # TOKU/TCVN/RCVN除外
+        settings['no_toku'] = args.no_toku
+        settings['no_tcvn'] = args.no_tcvn
+        settings['no_rcvn'] = args.no_rcvn
 
         # セットアップモード（option=4）自動切替の無効化
         settings['no_setup_mode'] = args.no_setup_mode

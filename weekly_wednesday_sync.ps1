@@ -93,7 +93,7 @@ $quickstart = Join-Path $root "scripts\quickstart.py"
 function Invoke-Step {
     param([string]$Label, [string]$Script, [string[]]$Dates)
     Write-Log "=== $Label START ==="
-    if (-not (Test-Path $Script)) { Write-Log "$Label: $Script not found - skip" "WARN"; return }
+    if (-not (Test-Path $Script)) { Write-Log "${Label}: $Script not found - skip" "WARN"; return }
     $anyFail = $false
     foreach ($d in $Dates) {
         Write-Log "[$Label] $d start"
@@ -121,7 +121,7 @@ function Invoke-Step {
 function Invoke-StepAll {
     param([string]$Label, [string]$Script)
     Write-Log "=== $Label START ==="
-    if (-not (Test-Path $Script)) { Write-Log "$Label: $Script not found - skip" "WARN"; return }
+    if (-not (Test-Path $Script)) { Write-Log "${Label}: $Script not found - skip" "WARN"; return }
     $pyArgs = @($Script,
         "--pg-host",     $env:POSTGRES_HOST,
         "--pg-port",     ([string]$env:POSTGRES_PORT),
@@ -144,6 +144,9 @@ Write-Log "=== SYNC START ==="
 $pyArgs = @(
     $quickstart,
     "--mode",        "update",
+    "--no-toku",
+    "--no-tcvn",
+    "--no-rcvn",
     "--db-type",     "postgresql",
     "--pg-host",     $env:POSTGRES_HOST,
     "--pg-port",     $env:POSTGRES_PORT,
@@ -196,7 +199,8 @@ if (Test-Path $weatherScript) {
 Write-Log "=== HARON_FIX START ==="
 $haronSql = Join-Path $root "scripts\fix_nl_ra_haron.sql"
 if (Test-Path $haronSql) {
-    $psqlCmd = (Get-Command psql -ErrorAction SilentlyContinue)?.Source
+    $_psqlGet = Get-Command psql -ErrorAction SilentlyContinue
+    $psqlCmd  = if ($_psqlGet) { $_psqlGet.Source } else { $null }
     if (-not $psqlCmd) { $psqlCmd = "C:\Program Files\PostgreSQL\17\bin\psql.exe" }
     if (Test-Path $psqlCmd) {
         $env:PGPASSWORD = $pgPassword
