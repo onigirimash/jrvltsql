@@ -91,7 +91,7 @@ $quickstart = Join-Path $root "scripts\quickstart.py"
 
 # ── Helper: run py script per race date ───────────────────────────────────────
 function Invoke-Step {
-    param([string]$Label, [string]$Script, [string[]]$Dates)
+    param([string]$Label, [string]$Script, [string[]]$Dates, [string[]]$ExtraArgs = @())
     Write-Log "=== $Label START ==="
     if (-not (Test-Path $Script)) { Write-Log "${Label}: $Script not found - skip" "WARN"; return }
     $anyFail = $false
@@ -102,7 +102,7 @@ function Invoke-Step {
             "--pg-port",     ([string]$env:POSTGRES_PORT),
             "--pg-database", $env:POSTGRES_DATABASE,
             "--pg-user",     $env:POSTGRES_USER,
-            "--pg-password", $pgPassword)
+            "--pg-password", $pgPassword) + $ExtraArgs
         $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
         & py "-3.12-32" @pyArgs 2>&1 | ForEach-Object {
             $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Label, $_
@@ -143,7 +143,7 @@ if ($ec -ne 0) { Write-Log "=== SYNC FAILED (exit: $ec) ===" "ERROR"; exit $ec }
 Write-Log "=== SYNC COMPLETE ==="
 
 # ── WIN_PROB ──────────────────────────────────────────────────────────────────
-Invoke-Step "WIN_PROB" (Join-Path $root "scripts\calc_win_prob.py")       $raceDates
+Invoke-Step "WIN_PROB" (Join-Path $root "scripts\calc_win_prob.py")       $raceDates @("--max-debut", "99")
 
 # ── EV ────────────────────────────────────────────────────────────────────────
 Invoke-Step "EV"       (Join-Path $root "scripts\calc_expected_value.py") $raceDates
