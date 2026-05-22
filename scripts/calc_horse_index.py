@@ -41,7 +41,7 @@ Usage:
 import argparse
 import os
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from statistics import mean, stdev
 
 import pg8000.native
@@ -128,7 +128,7 @@ def _connect(args) -> pg8000.native.Connection:
 
 def _cutoff_year_monthday(years: int, as_of: date) -> tuple[int, int]:
     """as_of日からN年前の起点日を (year, monthday) 形式で返す。"""
-    cutoff = as_of.replace(year=as_of.year - years)
+    cutoff = as_of - timedelta(days=years * 365)
     return cutoff.year, cutoff.month * 100 + cutoff.day
 
 
