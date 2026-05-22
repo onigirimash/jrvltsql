@@ -369,12 +369,11 @@ thead th.col-place-ev   { width: 78px; }
   .bias-group select,
   .bias-group input[type="number"] { min-width: 90px; }
 
-  /* テーブル: 常時表示7列のみ（44+100+40+80+80+88+44 = 476px） */
-  table { min-width: 460px; }
+  /* テーブル: 常時表示8列（44+100+40+80+80+88+44+72 = 548px） */
+  table { min-width: 540px; }
 
   /* PC専用列を非表示（列順: 1馬番 2馬名 3脚質 4勝率 5複勝率 6調整EV 7推奨
-                              8実力指数 9単勝O 10複勝O 11期待値 12複勝EV 13順位） */
-  thead th.col-idx,        tbody td:nth-child(8),
+                              8実力指数[表示] 9単勝O 10複勝O 11期待値 12複勝EV 13順位） */
   thead th.col-odds,       tbody td:nth-child(9),
   thead th.col-place-odds, tbody td:nth-child(10),
   thead th.col-ev,         tbody td:nth-child(11),
