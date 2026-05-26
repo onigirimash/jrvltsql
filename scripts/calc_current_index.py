@@ -11,7 +11,7 @@ nl_performance の perf_index を norm_index スケール（avg=50, std=10）に
   これにより current_index が norm_index と同一スケール（avg≈50, std≈8〜9）になる。
 
 算出式:
-  current_index = 直近5走加重平均 × 0.9 + キャリアベスト3走平均 × 0.1
+  current_index = 直近5走加重平均 × 0.7 + キャリアベスト3走平均 × 0.3
 
 直近5走加重平均:
   対象: 同一 (distance_cat, surface) の直近5走（perf_index IS NOT NULL）
@@ -25,7 +25,7 @@ nl_performance の perf_index を norm_index スケール（avg=50, std=10）に
   ※ 3走未満でも得られた走数で計算
 
 合成フォールバック:
-  両方あり  → 0.9 × 直近加重 + 0.1 × キャリアベスト
+  両方あり  → 0.7 × 直近加重 + 0.3 × キャリアベスト
   直近のみ  → 直近加重
   ベストのみ → キャリアベスト
   なし       → NULL（更新しない）
@@ -212,7 +212,7 @@ def _calc_current(
     best   = _career_best(races, cutoff, best_n)
 
     if recent is not None and best is not None:
-        return round(recent * 0.9 + best * 0.1, 3)
+        return round(recent * 0.7 + best * 0.3, 3)
     if recent is not None:
         return round(recent, 3)
     if best is not None:
