@@ -33,15 +33,6 @@
   <!-- レース情報バナー -->
   <div class="race-banner" id="race-banner"></div>
 
-  <!-- AI分析ボタン -->
-  <div id="ai-btn-wrap" style="display:none;margin-bottom:.75rem">
-    <button id="btn-ai" class="ai-btn">🤖 AI分析</button>
-    <span id="ai-cache-hint" class="ai-cache-hint" style="display:none">（キャッシュ済み）</span>
-  </div>
-
-  <!-- AI分析カード（テーブルの上） -->
-  <div class="ai-card" id="ai-card" style="display:none"></div>
-
   <!-- バイアス設定パネル -->
   <div class="bias-panel" id="bias-panel" style="display:none">
     <div class="bias-header">馬場バイアス設定</div>
@@ -131,7 +122,6 @@ let _horses         = [];   // raw API data
 let _cHorses        = [];   // computed (with bias_score, adjusted_ev)
 let _sortCol        = 'adjusted_ev';
 let _sortDir        = 'desc';
-let _currentRaceInfo = null;  // AI分析に渡すレース情報
 
 const BIAS_KEY = 'keiba_bias_settings';
 let _bias = { cushion: '', inner: 'flat', front: 'flat' };
@@ -149,10 +139,6 @@ const modal      = document.getElementById('modal');
 const modalTitle = document.getElementById('modal-title');
 const modalBody  = document.getElementById('modal-body');
 const biasPanel  = document.getElementById('bias-panel');
-const aiBtnWrap  = document.getElementById('ai-btn-wrap');
-const btnAI      = document.getElementById('btn-ai');
-const aiCard     = document.getElementById('ai-card');
-const aiCacheHint = document.getElementById('ai-cache-hint');
 const inpCushion = document.getElementById('inp-cushion');
 const selInner   = document.getElementById('sel-inner-bias');
 const selFront   = document.getElementById('sel-front-bias');
@@ -497,21 +483,12 @@ async function loadRaces(date, venue) {
   }
 }
 
-function resetAICard() {
-  aiBtnWrap.style.display  = 'none';
-  aiCard.style.display     = 'none';
-  aiCard.innerHTML         = '';
-  aiCacheHint.style.display = 'none';
-  _currentRaceInfo = null;
-}
-
 async function loadPrediction(date, venue, race) {
   setStatus('読み込み中...');
   wrap.style.display   = 'none';
   legend.style.display = 'none';
   biasPanel.style.display = 'none';
   banner.classList.remove('visible');
-  resetAICard();
   _horses = [];
 
   try {
@@ -535,12 +512,6 @@ async function loadPrediction(date, venue, race) {
     updateSortHeaders();
     renderTable();
 
-    _currentRaceInfo = {
-      date: info.date, venue: info.venue, race_num: info.race_num,
-      race_name: info.race_name || '', surface: info.surface || '',
-      distance: info.distance || 0,
-    };
-    aiBtnWrap.style.display  = '';
     biasPanel.style.display  = '';
     wrap.style.display       = '';
     legend.style.display     = 'flex';
@@ -608,130 +579,6 @@ function closeModal() {
   document.body.style.overflow = '';
 }
 
-// ── AI分析 ─────────────────────────────────────────────
-
-function renderAIText(text) {
-  // シンプルなMarkdown→HTML変換（外部ライブラリ不要）
-  let html = '';
-  const lines = text.split('\n');
-  let inList = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
-
-    // **bold**
-    line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-    // ## セクション見出し
-    if (/^## (.+)/.test(line)) {
-      if (inList) { html += '</ul>'; inList = false; }
-      html += `<h3 class="ai-section-title">${line.replace(/^## /, '')}</h3>`;
-      continue;
-    }
-
-    // 箇条書き（-/・）
-    if (/^[-・]\s/.test(line)) {
-      if (!inList) { html += '<ul class="ai-list">'; inList = true; }
-      html += `<li>${line.replace(/^[-・]\s/, '')}</li>`;
-      continue;
-    }
-
-    if (inList) { html += '</ul>'; inList = false; }
-
-    // 空行
-    if (!line.trim()) {
-      html += '<br>';
-      continue;
-    }
-
-    // ◎○▲ に色付け
-    line = line
-      .replace(/(◎\s*\S+)/g, '<span class="ai-rec-circle">$1</span>')
-      .replace(/(○\s*\S+)/g,  '<span class="ai-rec-maru">$1</span>')
-      .replace(/(▲\s*\S+)/g,  '<span class="ai-rec-sankaku">$1</span>');
-
-    html += `<p class="ai-line">${line}</p>`;
-  }
-  if (inList) html += '</ul>';
-  return html;
-}
-
-async function requestAIAnalysis() {
-  if (!_currentRaceInfo) return;
-
-  btnAI.disabled = true;
-  aiCard.style.display = '';
-  aiCard.innerHTML = '<div class="ai-loading"><span class="ai-spinner"></span> AI分析中...</div>';
-  aiCacheHint.style.display = 'none';
-
-  const payload = {
-    race_info: _currentRaceInfo,
-    horses: _cHorses.map(h => ({
-      umaban:         h.umaban,
-      bamei:          h.bamei,
-      avg_corner_pos: h.avg_corner_pos ?? null,
-      adjusted_index: h.adjusted_index ?? null,
-      win_prob_pct:   h.win_prob_pct   ?? null,
-      place_prob_pct: h.place_prob_pct ?? null,
-      odds:           h.odds           ?? null,
-      expected_value:  h.expected_value  ?? null,
-      adjusted_ev:     h.adjusted_ev     ?? null,
-      place_odds_min:  h.place_odds_min  ?? null,
-      place_odds_max:  h.place_odds_max  ?? null,
-      place_ev:        h.place_ev        ?? null,
-      bias_score:      h.bias_score      ?? 0,
-    })),
-    bias: _bias,
-  };
-
-  try {
-    const res = await fetch('/api/ai_analysis', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      aiCard.innerHTML = `<div class="ai-error">AI分析エラー: ${j.detail || res.status}</div>`;
-      return;
-    }
-
-    const isCache = res.headers.get('X-Cache') === 'HIT';
-    const reader  = res.body.getReader();
-    const dec     = new TextDecoder();
-    let accumulated = '';
-    let buf = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const parts = buf.split('\n\n');
-      buf = parts.pop();        // 未完了のチャンクを保持
-      for (const part of parts) {
-        if (!part.startsWith('data: ')) continue;
-        let data;
-        try { data = JSON.parse(part.slice(6)); } catch { continue; }
-        if (data.error) {
-          aiCard.innerHTML = `<div class="ai-error">エラー: ${data.error}</div>`;
-          return;
-        }
-        if (data.text) {
-          accumulated += data.text;
-          aiCard.innerHTML = `<div class="ai-content">${renderAIText(accumulated)}</div>`;
-        }
-      }
-    }
-
-    if (isCache) aiCacheHint.style.display = '';
-  } catch (e) {
-    aiCard.innerHTML = `<div class="ai-error">通信エラー: ${e.message}</div>`;
-  } finally {
-    btnAI.disabled = false;
-  }
-}
-
 // ── Event listeners ────────────────────────────────────
 selDate.addEventListener('change', () => {
   const d = selDate.value;
@@ -741,7 +588,6 @@ selDate.addEventListener('change', () => {
   legend.style.display = 'none';
   biasPanel.style.display = 'none';
   banner.classList.remove('visible');
-  resetAICard();
   setStatus('');
   if (d) loadVenues(d);
 });
@@ -750,11 +596,8 @@ selVenue.addEventListener('change', () => {
   const d = selDate.value, v = selVenue.value;
   resetSelect(selRace, 'Rを選択');
   wrap.style.display = 'none';
-  resetAICard();
   if (d && v) loadRaces(d, v);
 });
-
-btnAI.addEventListener('click', requestAIAnalysis);
 
 selRace.addEventListener('change', () => {
   const d = selDate.value, v = selVenue.value, r = selRace.value;
