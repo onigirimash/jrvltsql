@@ -265,6 +265,46 @@ def get_prediction(
     }
 
 
+# ── GET /api/baba_info ─────────────────────────────────────────────────────
+@router.get("/api/baba_info")
+def get_baba_info(
+    date:  str = Query(..., description="YYYYMMDD"),
+    venue: str = Query(..., description="競馬場コード (例: 09)"),
+):
+    """nl_baba_moisture から指定日・競馬場の含水率・クッション値を返す。"""
+    if len(date) != 8 or not date.isdigit():
+        raise HTTPException(400, "date は YYYYMMDD 形式で指定してください")
+    venue = venue.zfill(2)
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                cushion_value,
+                turf_moisture_goal,
+                turf_moisture_4corner,
+                dirt_moisture_goal,
+                dirt_moisture_4corner,
+                ROUND((turf_moisture_goal + turf_moisture_4corner) / 2, 1) AS turf_moisture,
+                ROUND((dirt_moisture_goal + dirt_moisture_4corner) / 2, 1) AS dirt_moisture
+            FROM nl_baba_moisture
+            WHERE race_date = %s AND jyo_cd = %s
+        """, (date, venue))
+        row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(404, f"{date} / jyo_cd={venue} の馬場情報がありません")
+
+    cols = [
+        "cushion_value",
+        "turf_moisture_goal", "turf_moisture_4corner",
+        "dirt_moisture_goal", "dirt_moisture_4corner",
+        "turf_moisture", "dirt_moisture",
+    ]
+    result = dict(zip(cols, row))
+    return {k: (float(v) if v is not None else None) for k, v in result.items()}
+
+
 # ── GET /api/horse_history ──────────────────────────────────────────────────
 @router.get("/api/horse_history")
 def get_horse_history(kettonum: str = Query(...)):

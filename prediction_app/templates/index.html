@@ -50,6 +50,10 @@
         <label for="inp-cushion">クッション値</label>
         <input type="number" id="inp-cushion" step="0.1" min="0" max="20" placeholder="例: 9.2">
       </div>
+      <div class="bias-group" style="align-self:flex-end">
+        <button id="btn-jra-fill" onclick="fetchAndFillBabaInfo()" style="padding:.35rem .75rem;font-size:.82rem;cursor:pointer;border:1px solid #aaa;border-radius:4px;background:#f8f8f8">📥 JRAデータ自動入力</button>
+        <div id="jra-baba-status" style="font-size:.75rem;color:#666;margin-top:.25rem"></div>
+      </div>
       <div class="bias-group">
         <label for="sel-inner-bias">内外バイアス</label>
         <select id="sel-inner-bias">
@@ -399,6 +403,36 @@ function renderTable() {
       <td>${rankCell}</td>
     </tr>`;
   }).join('');
+}
+
+// ── JRAデータ自動入力 ───────────────────────────────────
+async function fetchAndFillBabaInfo() {
+  const date  = selDate.value;
+  const venue = selVenue.value;
+  if (!date || !venue) return;
+
+  const statusEl = document.getElementById('jra-baba-status');
+  statusEl.textContent = '取得中...';
+
+  try {
+    const d = await apiFetch(`/api/baba_info?date=${date}&venue=${venue}`);
+    const fmt = v => (v !== null && v !== undefined) ? v : '−';
+
+    statusEl.innerHTML =
+      `クッション値: <strong>${fmt(d.cushion_value)}</strong> ／ ` +
+      `芝含水率: <strong>${fmt(d.turf_moisture)}%</strong> ／ ` +
+      `ダート含水率: <strong>${fmt(d.dirt_moisture)}%</strong>`;
+
+    if (d.cushion_value !== null) {
+      inpCushion.value = d.cushion_value;
+      onBiasChange();
+    }
+  } catch (e) {
+    const msg = e.message || '';
+    statusEl.textContent = msg.includes('馬場情報がありません')
+      ? 'JRA馬場データなし（PDF未公開または取得前）'
+      : `取得失敗: ${msg}`;
+  }
 }
 
 // ── Bias change handler ────────────────────────────────
