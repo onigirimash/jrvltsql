@@ -8,14 +8,10 @@
 
 計算式:
   perf_index = time_dev × (track_index / 100)
-             + moisture_index
              + futan_dev + disadv_dev + pace_dev + bias_dev
 
-  track_index    : nl_track_speed から (race_date, jyocd, surface) で検索
-                   取得できない場合は 100（補正なし）を使用
-  moisture_index : nl_track_speed から同じキーで取得
-                   芝=(cushion_value-9.0)×0.12 / ダート=(dirt_moisture-5.9)×0.095
-                   取得できない場合は 0（補正なし）を使用
+  track_index : nl_track_speed から (race_date, jyocd, surface) で検索
+                取得できない場合は 100（補正なし）を使用
 
   surface 変換: nl_ra.trackcd 先頭文字
     '1' → 'T'（芝）
@@ -58,8 +54,7 @@ track_idx AS (
     SELECT
         rs.jyocd,
         rs.racenum,
-        COALESCE(MAX(ts.track_index),    100) AS track_index,
-        COALESCE(MAX(ts.moisture_index),   0) AS moisture_index
+        COALESCE(MAX(ts.track_index), 100) AS track_index
     FROM race_surface rs
     LEFT JOIN nl_track_speed ts
       ON ts.race_date = :race_date
@@ -70,7 +65,6 @@ track_idx AS (
 UPDATE nl_performance p
 SET perf_index = ROUND((
     COALESCE(p.time_dev,   0) * ti.track_index / 100.0
-    + ti.moisture_index
     + COALESCE(p.futan_dev,  0)
     + COALESCE(p.disadv_dev, 0)
     + COALESCE(p.pace_dev,   0)
