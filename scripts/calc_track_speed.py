@@ -42,6 +42,14 @@ _MIN_RACES = 3
 # 過去参照年数
 _LOOKBACK_YEARS = 5
 
+# ── 馬場補正係数（2024相関分析より）──────────────────────
+# 芝: cushion_value (r=0.112)  標準値=9.0
+_CUSHION_STD   = 9.0
+_CUSHION_COEF  = 0.12
+# ダート: dirt_moisture (r=0.448)  2024平均=5.9%
+_DIRT_MOIST_MEAN = 5.9
+_DIRT_MOIST_COEF = 0.095
+
 # ──────────────────────────────────────────────
 # SQL
 # ──────────────────────────────────────────────
@@ -173,7 +181,7 @@ ORDER BY jyocd, surface
 """
 
 _SQL_PREV = """
-SELECT track_index
+SELECT track_index, moisture_index
 FROM   nl_track_speed
 WHERE  jyocd     = :jyocd
   AND  surface   = :surface
@@ -182,14 +190,33 @@ ORDER BY race_date DESC
 LIMIT 1
 """
 
+_SQL_BABA = """
+SELECT
+    cushion_value,
+    ROUND((turf_moisture_goal + turf_moisture_4corner) / 2, 1) AS turf_moisture,
+    ROUND((dirt_moisture_goal + dirt_moisture_4corner) / 2, 1) AS dirt_moisture
+FROM nl_baba_moisture
+WHERE race_date = :race_date AND jyo_cd = :jyocd
+"""
+
 _SQL_UPSERT = """
-INSERT INTO nl_track_speed (race_date, jyocd, surface, track_index, race_count, fallback)
-VALUES (:race_date, :jyocd, :surface, :track_index, :race_count, :fallback)
+INSERT INTO nl_track_speed (
+    race_date, jyocd, surface, track_index, race_count, fallback,
+    cushion_value, turf_moisture, dirt_moisture, moisture_index
+)
+VALUES (
+    :race_date, :jyocd, :surface, :track_index, :race_count, :fallback,
+    :cushion_value, :turf_moisture, :dirt_moisture, :moisture_index
+)
 ON CONFLICT (race_date, jyocd, surface) DO UPDATE SET
-    track_index = EXCLUDED.track_index,
-    race_count  = EXCLUDED.race_count,
-    fallback    = EXCLUDED.fallback,
-    updated_at  = NOW()
+    track_index    = EXCLUDED.track_index,
+    race_count     = EXCLUDED.race_count,
+    fallback       = EXCLUDED.fallback,
+    cushion_value  = EXCLUDED.cushion_value,
+    turf_moisture  = EXCLUDED.turf_moisture,
+    dirt_moisture  = EXCLUDED.dirt_moisture,
+    moisture_index = EXCLUDED.moisture_index,
+    updated_at     = NOW()
 """
 
 # ──────────────────────────────────────────────
@@ -228,6 +255,23 @@ def _to_float(v) -> float | None:
     return float(v)
 
 
+def _calc_moisture_index(surface: str, cushion: float | None, dirt_moisture: float | None) -> float | None:
+    """馬場補正係数を計算する。
+    芝:  (cushion_value - 9.0) × 0.12
+    ダート: (dirt_moisture - 5.9) × 0.095
+    障害: None
+    """
+    if surface == 'T':
+        if cushion is None:
+            return None
+        return round((cushion - _CUSHION_STD) * _CUSHION_COEF, 4)
+    if surface == 'D':
+        if dirt_moisture is None:
+            return None
+        return round((dirt_moisture - _DIRT_MOIST_MEAN) * _DIRT_MOIST_COEF, 4)
+    return None
+
+
 # ──────────────────────────────────────────────
 # コア処理
 # ──────────────────────────────────────────────
@@ -252,6 +296,9 @@ def calc_one_day(conn: pg8000.native.Connection, target: date) -> list[dict]:
         print(f"  {race_date_str}: 対象レースなし（スキップ）")
         return []
 
+    # 馬場情報（nl_baba_moisture）を競馬場ごとに取得
+    baba_cache: dict[str, dict] = {}
+
     results = []
     for row in rows:
         jyocd      = row[0]
@@ -259,15 +306,36 @@ def calc_one_day(conn: pg8000.native.Connection, target: date) -> list[dict]:
         track_idx  = _to_float(row[2])
         race_count = int(row[3])
 
-        fallback = False
+        # nl_baba_moisture から含水率・クッション値を取得（1場につき1回）
+        if jyocd not in baba_cache:
+            baba_rows = conn.run(_SQL_BABA, race_date=race_date_str, jyocd=jyocd)
+            if baba_rows:
+                baba_cache[jyocd] = {
+                    'cushion':      _to_float(baba_rows[0][0]),
+                    'turf_moist':   _to_float(baba_rows[0][1]),
+                    'dirt_moist':   _to_float(baba_rows[0][2]),
+                }
+            else:
+                baba_cache[jyocd] = {'cushion': None, 'turf_moist': None, 'dirt_moist': None}
+
+        baba = baba_cache[jyocd]
+
+        fallback      = False
+        moist_idx_fb  = None  # フォールバック時は moisture_index を引き継がない
         if race_count < _MIN_RACES:
             prev_rows = conn.run(
                 _SQL_PREV,
                 jyocd=jyocd, surface=surface, race_date=race_date_str,
             )
             if prev_rows and prev_rows[0][0] is not None:
-                track_idx = _to_float(prev_rows[0][0])
-                fallback  = True
+                track_idx    = _to_float(prev_rows[0][0])
+                moist_idx_fb = _to_float(prev_rows[0][1])
+                fallback     = True
+
+        moisture_idx = (
+            moist_idx_fb if fallback
+            else _calc_moisture_index(surface, baba['cushion'], baba['dirt_moist'])
+        )
 
         rec = dict(
             race_date=race_date_str,
@@ -276,6 +344,10 @@ def calc_one_day(conn: pg8000.native.Connection, target: date) -> list[dict]:
             track_index=track_idx,
             race_count=race_count,
             fallback=fallback,
+            cushion_value=baba['cushion'],
+            turf_moisture=baba['turf_moist'],
+            dirt_moisture=baba['dirt_moist'],
+            moisture_index=moisture_idx,
         )
         conn.run(_SQL_UPSERT, **rec)
         results.append(rec)
@@ -287,10 +359,11 @@ def _summarize(results: list[dict]) -> str:
     parts = []
     for r in sorted(results, key=lambda x: (x['jyocd'], x['surface'])):
         fb = ' [FB]' if r['fallback'] else ''
-        idx = f"{r['track_index']:.2f}" if r['track_index'] is not None else 'N/A'
+        idx  = f"{r['track_index']:.2f}"   if r['track_index']   is not None else 'N/A'
+        midx = f"{r['moisture_index']:+.4f}" if r['moisture_index'] is not None else 'N/A'
         parts.append(
             f"  jyo={r['jyocd']} surf={r['surface']} idx={idx} "
-            f"races={r['race_count']}{fb}"
+            f"moist_idx={midx} races={r['race_count']}{fb}"
         )
     return '\n'.join(parts)
 
