@@ -1,5 +1,18 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── 馬場状態バッジ ── */
+.baba-badge {
+  display: inline-block;
+  padding: .1rem .45rem;
+  border-radius: 3px;
+  font-weight: bold;
+  font-size: .82rem;
+}
+.baba-good    { background: #e6f4ea; color: #1a6e2e; }
+.baba-yayaomo { background: #fff8e1; color: #7a5c00; }
+.baba-omo     { background: #fff3e0; color: #b84700; }
+.baba-furyo   { background: #fce4ec; color: #990000; }
+
 body {
   font-family: 'Helvetica Neue', Arial, 'Hiragino Sans', sans-serif;
   background: #f0f2f5;

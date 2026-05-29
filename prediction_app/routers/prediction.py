@@ -224,19 +224,30 @@ def get_prediction(
     }
 
 
+# 馬場状態コード → 日本語
+_BABA_LABEL = {"0": "良", "1": "稍重", "2": "重", "3": "不良"}
+
+
+def _baba_label(code) -> str | None:
+    return _BABA_LABEL.get(str(code).strip()) if code is not None else None
+
+
 # ── GET /api/baba_info ─────────────────────────────────────────────────────
 @router.get("/api/baba_info")
 def get_baba_info(
     date:  str = Query(..., description="YYYYMMDD"),
     venue: str = Query(..., description="競馬場コード (例: 09)"),
 ):
-    """nl_baba_moisture から指定日・競馬場の含水率・クッション値を返す。"""
+    """nl_baba_moisture の含水率・クッション値 ＋ nl_ra の馬場状態コードを返す。"""
     if len(date) != 8 or not date.isdigit():
         raise HTTPException(400, "date は YYYYMMDD 形式で指定してください")
     venue = venue.zfill(2)
+    year, monthday = _parse_date(date)
 
     with get_conn() as conn:
         cur = conn.cursor()
+
+        # ── 含水率・クッション値 ──
         cur.execute("""
             SELECT
                 cushion_value,
@@ -249,19 +260,44 @@ def get_baba_info(
             FROM nl_baba_moisture
             WHERE race_date = %s AND jyo_cd = %s
         """, (date, venue))
-        row = cur.fetchone()
+        moisture_row = cur.fetchone()
 
-    if not row:
+        # ── 馬場状態（nl_ra から当日・当場の代表値を取得） ──
+        # 全レース同一値のため racenum 昇順の先頭 1 件で十分
+        cur.execute("""
+            SELECT sibababacd, dirtbabacd
+            FROM nl_ra
+            WHERE year = %s AND monthday = %s AND jyocd = %s
+              AND sibababacd IS NOT NULL
+            ORDER BY racenum
+            LIMIT 1
+        """, (year, monthday, venue))
+        baba_row = cur.fetchone()
+
+    if moisture_row is None and baba_row is None:
         raise HTTPException(404, f"{date} / jyo_cd={venue} の馬場情報がありません")
 
-    cols = [
+    # 含水率・クッション値
+    moisture_cols = [
         "cushion_value",
         "turf_moisture_goal", "turf_moisture_4corner",
         "dirt_moisture_goal", "dirt_moisture_4corner",
         "turf_moisture", "dirt_moisture",
     ]
-    result = dict(zip(cols, row))
-    return {k: (float(v) if v is not None else None) for k, v in result.items()}
+    result = {k: None for k in moisture_cols}
+    if moisture_row:
+        for k, v in zip(moisture_cols, moisture_row):
+            result[k] = float(v) if v is not None else None
+
+    # 馬場状態コード＋ラベル
+    siba_cd   = str(baba_row[0]).strip() if baba_row and baba_row[0] is not None else None
+    dirt_cd   = str(baba_row[1]).strip() if baba_row and baba_row[1] is not None else None
+    result["siba_baba_cd"]    = siba_cd
+    result["dirt_baba_cd"]    = dirt_cd
+    result["siba_baba_label"] = _baba_label(siba_cd)
+    result["dirt_baba_label"] = _baba_label(dirt_cd)
+
+    return result
 
 
 # ── GET /api/horse_history ──────────────────────────────────────────────────

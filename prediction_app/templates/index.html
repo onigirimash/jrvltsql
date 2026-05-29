@@ -402,12 +402,28 @@ async function fetchAndFillBabaInfo() {
 
   try {
     const d = await apiFetch(`/api/baba_info?date=${date}&venue=${venue}`);
-    const fmt = v => (v !== null && v !== undefined) ? v : '−';
+    const fmt  = v => (v !== null && v !== undefined) ? v : '−';
+    const fmtB = (label, cd) => {
+      if (!label) return '−';
+      const cls = {'良':'baba-good','稍重':'baba-yayaomo','重':'baba-omo','不良':'baba-furyo'}[label] || '';
+      return `<span class="baba-badge ${cls}">${label}</span>`;
+    };
 
-    statusEl.innerHTML =
-      `クッション値: <strong>${fmt(d.cushion_value)}</strong> ／ ` +
-      `芝含水率: <strong>${fmt(d.turf_moisture)}%</strong> ／ ` +
-      `ダート含水率: <strong>${fmt(d.dirt_moisture)}%</strong>`;
+    // 馬場状態行（常に表示）
+    const sibaStr = fmtB(d.siba_baba_label, d.siba_baba_cd);
+    const dirtStr = fmtB(d.dirt_baba_label, d.dirt_baba_cd);
+    const babaLine = `芝: ${sibaStr} ／ ダート: ${dirtStr}`;
+
+    // 含水率行（データがあれば表示）
+    const moistureLine = (d.cushion_value !== null || d.turf_moisture !== null)
+      ? `クッション値: <strong>${fmt(d.cushion_value)}</strong> ／ ` +
+        `芝含水率: <strong>${fmt(d.turf_moisture)}%</strong> ／ ` +
+        `ダート含水率: <strong>${fmt(d.dirt_moisture)}%</strong>`
+      : '';
+
+    statusEl.innerHTML = moistureLine
+      ? `${babaLine}<br><span style="color:#888;font-size:.72rem">${moistureLine}</span>`
+      : babaLine;
 
     if (d.cushion_value !== null) {
       inpCushion.value = d.cushion_value;
@@ -416,7 +432,7 @@ async function fetchAndFillBabaInfo() {
   } catch (e) {
     const msg = e.message || '';
     statusEl.textContent = msg.includes('馬場情報がありません')
-      ? 'JRA馬場データなし（PDF未公開または取得前）'
+      ? 'JRA馬場データなし'
       : `取得失敗: ${msg}`;
   }
 }
