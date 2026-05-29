@@ -15,9 +15,10 @@ WF7フォーマット（TARGET frontier JV 独自形式）:
     [+0-1]   場コード       01=札幌 .. 10=小倉
     [+2-3]   回             01 ..
     [+4-5]   日             01 ..
-    [+6]     芝馬場状態     0=良 1=稍重 2=重 3=不良
-    [+7]     ダ馬場状態     0=良 1=稍重 2=重 3=不良
-  同一開催で複数ブロックある場合は最後（最終状態）を採用する。
+    [+6]     セッションフラグ  '0'=開催前(朝確認) / '1'=開催中(レース時)
+    [+7]     馬場状態コード    '0'=良 '1'=稍重 '2'=重 ('9'=未計測)
+  同一開催で複数ブロックがある場合、セッション='1' の最後のブロックを採用する。
+  WF7は芝・ダートを一本化した統合コードのため、sibababacd・dirtbabacd に同値を設定。
 
 Usage:
     py -3.12-32 scripts/parse_wf_baba.py [--start-year 2021] [--end-year 2026] [--dry-run]
@@ -44,21 +45,18 @@ WF_DATA_ROOT = Path(r"C:\TFJV\W5_DATA")
 VALID_JYO = {f"{i:02d}" for i in range(1, 11)}
 
 
-def parse_wf7_file(filepath: Path) -> Dict[Tuple[str, int, int], Tuple[str, str]]:
+def parse_wf7_file(filepath: Path) -> Dict[Tuple[str, int, int], str]:
     """
-    WF7 ファイルを解析して {(場コード, 回, 日): (芝状態, ダート状態)} を返す。
+    WF7 ファイルを解析して {(場コード, 回, 日): 馬場状態コード} を返す。
 
-    WF7 ブロックの並びの意味:
-      - 各開催について複数ブロックが存在する（時刻経過での更新）
-      - 第1ブロック: 開始時点（sib が '0'=良 で dirt='9'=未確認 の場合あり）
-      - 後続ブロック: レース進行に伴う更新（sib が '1' に悪化するケースあり）
-      → 開始時の芝状態を最初に採用し、ダートは最初の有効コード(0-3)を使う。
+    8文字ブロックのフィールド:
+      pos6 = セッションフラグ: '0'=開催前(朝確認) '1'=開催中(レース時)
+      pos7 = 馬場状態コード:   '0'=良 '1'=稍重 '2'=重 ('9'=未計測)
 
-    状態コード: 0=良 1=稍重 2=重 3=不良 (WF7 ネイティブ値をそのまま格納)
-    dirt='9': 未計測/未設定（開幕直後に多い）→ その後の有効コードで補完
+    セッション='1' かつ 有効コード('0'-'3')の最後のブロックを採用する。
+    WF7 は芝・ダートを一本化した統合コードのため返値は1値。
     """
-    first_sib:  Dict[Tuple[str, int, int], str] = {}  # 最初に記録された芝状態
-    first_dirt: Dict[Tuple[str, int, int], str] = {}  # 最初の有効(0-3)ダート状態
+    last_cond: Dict[Tuple[str, int, int], str] = {}
 
     try:
         with open(filepath, encoding="ascii", errors="ignore") as f:
@@ -82,27 +80,15 @@ def parse_wf7_file(filepath: Path) -> Dict[Tuple[str, int, int], Tuple[str, str]
                     if kaiji == 0 or nichiji == 0:
                         break
 
-                    key   = (jyo, kaiji, nichiji)
-                    s_raw = blk[6]
-                    d_raw = blk[7]
-
-                    # 芝状態: 最初のブロックを採用（dirt='9' でも sib は有効）
-                    if key not in first_sib and s_raw in "0123":
-                        first_sib[key] = s_raw
-
-                    # ダート状態: 最初の有効コード(0-3)を採用
-                    if key not in first_dirt and d_raw in "0123":
-                        first_dirt[key] = d_raw
+                    # セッション='1'（開催中）かつ有効な馬場コードのみ採用
+                    if blk[6] == "1" and blk[7] in "0123":
+                        last_cond[(jyo, kaiji, nichiji)] = blk[7]
 
                     pos += 8
     except OSError as e:
         print(f"  [WARN] {filepath.name}: {e}", file=sys.stderr)
 
-    # 両方揃ったキーのみ返す（dirtが取れない場合は '0'=良 にフォールバック）
-    result: Dict[Tuple[str, int, int], Tuple[str, str]] = {}
-    for key, sib in first_sib.items():
-        result[key] = (sib, first_dirt.get(key, "0"))
-    return result
+    return last_cond
 
 
 def connect_db(password: str):
@@ -155,7 +141,8 @@ def main():
             grand_files += 1
             file_count = 0
 
-            for (jyo, kaiji, nichiji), (shiba, dirt) in baba.items():
+            # baba: {(jyo, kaiji, nichiji): cond_code}  (芝・ダート統合の1値)
+            for (jyo, kaiji, nichiji), cond in baba.items():
                 if args.dry_run:
                     rows = conn.run(
                         "SELECT COUNT(*) FROM nl_ra"
@@ -167,10 +154,10 @@ def main():
                 else:
                     conn.run(
                         "UPDATE nl_ra"
-                        " SET sibababacd = :shiba, dirtbabacd = :dirt"
+                        " SET sibababacd = :cond, dirtbabacd = :cond"
                         " WHERE year = :yr AND monthday = :md"
                         " AND jyocd = :jyo AND kaiji = :kai AND nichiji = :nichi",
-                        shiba=shiba, dirt=dirt,
+                        cond=cond,
                         yr=full_year, md=monthday, jyo=jyo, kai=kaiji, nichi=nichiji,
                     )
                     file_count += conn.row_count
