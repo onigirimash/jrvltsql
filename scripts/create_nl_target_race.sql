@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS nl_target_race (
+  race_date   CHAR(8)       NOT NULL,
+  jyo_cd      CHAR(2)       NOT NULL,
+  racenum     INT           NOT NULL,
+  surface     CHAR(1),
+  distance    INT,
+  baba_state  VARCHAR(4),
+  race_pci    NUMERIC(5,1),
+  agari3f     NUMERIC(5,1),
+  lap01  NUMERIC(4,1), lap02  NUMERIC(4,1), lap03  NUMERIC(4,1),
+  lap04  NUMERIC(4,1), lap05  NUMERIC(4,1), lap06  NUMERIC(4,1),
+  lap07  NUMERIC(4,1), lap08  NUMERIC(4,1), lap09  NUMERIC(4,1),
+  lap10  NUMERIC(4,1), lap11  NUMERIC(4,1), lap12  NUMERIC(4,1),
+  lap13  NUMERIC(4,1), lap14  NUMERIC(4,1), lap15  NUMERIC(4,1),
+  corner1  VARCHAR(100),
+  corner2  VARCHAR(100),
+  corner3  VARCHAR(100),
+  corner4  VARCHAR(100),
+  created_at  TIMESTAMP DEFAULT NOW(),
+  PRIMARY KEY (race_date, jyo_cd, racenum)
+);
