@@ -6,17 +6,14 @@
 PCI（Pace Change Index）と脚質から展開の恩恵/損失を秒/ハロン換算し
 nl_performance.pace_dev へ UPDATE する。
 
-PCI の計算式（レース単位）:
-  avg_run_sec = 同レース完走馬の平均走破タイム（秒換算）
-  前半Ave-3F  = (avg_run_sec - 上がり3F) × 600 ÷ (距離 - 600)
-  race_pci    = 上がり3F ÷ (前半Ave-3F + 上がり3F) × 100
-  ※race_pci > 50 : ハイペース（前半速い/上がり遅い）
-  ※race_pci < 48 : スロー    （前半遅い/上がり速い）
+TARGET race_pci の向き（2021-2024 単勝回収率分析で確定）:
+  PCI < 48 : ハイペース（前半速い/上がり遅い）逃げ回収率128.5%
+  PCI > 52 : スロー    （前半遅い/上がり速い）逃げ回収率151.8%, 追込15.2%
 
 補正値の計算式:
-  ハイペース(PCI>50) × 逃げ先行(脚質1,2): pace_dev = -(PCI-50) × 0.02 / ハロン数
-  スロー(PCI<48)     × 差し追込(脚質3,4): pace_dev = -(48-PCI) × 0.02 / ハロン数
-  それ以外                               : pace_dev = 0
+  スロー(PCI>52)     × 差し・追込(脚質3,4): pace_dev = -(PCI-52) × 0.02 / ハロン数
+  ハイペース(PCI<48) × 逃げ(脚質1)        : pace_dev = -(48-PCI) × 0.02 / ハロン数
+  それ以外                                 : pace_dev = 0
 
 脚質の導出:
   nl_se.kyakusitukubun は現行 JRA-VAN データで無効値（0x40等）のため使用不可。
@@ -58,8 +55,8 @@ import pg8000.native
 # ──────────────────────────────────────────────────────
 
 _STYLE_COEFF = 0.02   # 秒/PCI点
-_PCI_HI      = 50.0   # ハイペース閾値（PCI > 50 = 前半速い = ハイペース）
-_PCI_SL      = 48.0   # スロー閾値    （PCI < 48 = 前半遅い = スロー）
+_PCI_SLOW    = 52.0   # スロー閾値    （TARGET PCI > 52 = スロー = 逃げ有利）
+_PCI_FAST    = 48.0   # ハイペース閾値（TARGET PCI < 48 = ハイペース = 逃げ相対不利）
 
 # ──────────────────────────────────────────────────────
 # SQL
@@ -228,14 +225,19 @@ def _derive_running_style(
 
 
 def _calc_pace_dev(pci: float | None, style: str | None, furlongs: float) -> float:
-    """展開補正値を計算する。補正対象外は 0.0 を返す。"""
+    """展開補正値を計算する。補正対象外は 0.0 を返す。
+
+    TARGET PCI の向き（回収率分析で確定）:
+      PCI > 52 = スロー → 差し追込が不利（単勝回収率15-33%）
+      PCI < 48 = ハイペース → 逃げが相対不利（128.5% vs スロー151.8%）
+    """
     if pci is None or style is None or furlongs <= 0:
         return 0.0
-    if style in ('1', '2') and pci > _PCI_HI:      # 逃げ・先行 × ハイペース
-        pace_gap = pci - _PCI_HI
+    if style in ('3', '4') and pci > _PCI_SLOW:    # 差し・追込 × スロー
+        pace_gap = pci - _PCI_SLOW
         return round(-(pace_gap * _STYLE_COEFF / furlongs), 3)
-    elif style in ('3', '4') and pci < _PCI_SL:    # 差し・追込 × スロー
-        pace_gap = _PCI_SL - pci
+    elif style == '1' and pci < _PCI_FAST:          # 逃げ × ハイペース
+        pace_gap = _PCI_FAST - pci
         return round(-(pace_gap * _STYLE_COEFF / furlongs), 3)
     return 0.0
 
