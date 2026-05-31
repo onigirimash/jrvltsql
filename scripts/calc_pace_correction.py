@@ -34,7 +34,9 @@ PCI の計算式（レース単位）:
   距離       : nl_ra.kyori（m）
   コーナー順位: nl_se.jyuni2c / jyuni3c / jyuni4c
   完走頭数   : nl_se.kakuteijyuni >= 1 の COUNT（レース単位集計）
-  ※race_pci はレース全体の平均走破タイムから算出し全馬に適用する
+  race_pci 優先順位:
+    1. nl_target_race.race_pci （TARGETの公式PCI）
+    2. nl_ra.haron3l + 平均走破タイムから計算（フォールバック）
 
 Usage:
     py -3.12-32 scripts/calc_pace_correction.py [options]
@@ -64,8 +66,9 @@ _PCI_SL      = 48.0   # スロー閾値    （PCI < 48 = 前半遅い = スロ�
 # ──────────────────────────────────────────────────────
 
 # 対象日の全完走馬（コーナー順位・haron3l・race_pci 付き）
-# race_pci: レース単位の平均走破タイムから計算したPCI（全馬共通）
+# race_pci: nl_target_race 公式PCI を優先し、なければ平均走破タイムから計算
 # finisher_count: 同一レースの確定着順馬数（脚質閾値の基準）
+# pci_source: 'target'=nl_target_race使用 / 'calc'=フォールバック計算
 _SQL_TARGET = """
 WITH race_finishers AS (
     SELECT
@@ -100,16 +103,20 @@ SELECT
     ra.haron3l,
     ra.kyori,
     rf.finisher_count,
-    CASE
-        WHEN ra.haron3l > 0
-         AND ra.kyori > 600
-         AND ravg.avg_run_sec > ra.haron3l
-        THEN ra.haron3l
-             / ((ravg.avg_run_sec - ra.haron3l) * 600.0 / (ra.kyori - 600)
-                + ra.haron3l)
-             * 100.0
-        ELSE NULL
-    END AS race_pci
+    COALESCE(
+        tr.race_pci,
+        CASE
+            WHEN ra.haron3l > 0
+             AND ra.kyori > 600
+             AND ravg.avg_run_sec > ra.haron3l
+            THEN ra.haron3l
+                 / ((ravg.avg_run_sec - ra.haron3l) * 600.0 / (ra.kyori - 600)
+                    + ra.haron3l)
+                 * 100.0
+            ELSE NULL
+        END
+    ) AS race_pci,
+    CASE WHEN tr.race_pci IS NOT NULL THEN 1 ELSE 0 END AS pci_from_target
 FROM nl_se se
 JOIN nl_ra ra
   ON  ra.year     = se.year
@@ -132,6 +139,10 @@ JOIN race_avg ravg
   AND ravg.kaiji    = se.kaiji
   AND ravg.nichiji  = se.nichiji
   AND ravg.racenum  = se.racenum
+LEFT JOIN nl_target_race tr
+  ON  tr.race_date = ra.year::text || LPAD(ra.monthday::text, 4, '0')
+  AND tr.jyo_cd    = ra.jyocd
+  AND tr.racenum   = ra.racenum
 WHERE ra.year     = :year
   AND ra.monthday = :monthday
   AND ra.jyocd BETWEEN '01' AND '10'
@@ -254,15 +265,21 @@ def calc_one_day(
     nonzero = 0
     no_style = 0
     no_pci = 0
+    pci_target_count = 0
+    pci_calc_count = 0
 
     for row in rows:
         (year_h, monthday_h, jyocd, kaiji, nichiji, racenum, umaban,
          jyuni2c, jyuni3c, jyuni4c,
-         haron3l, kyori_raw, finisher_count, race_pci_raw) = row
+         haron3l, kyori_raw, finisher_count, race_pci_raw, pci_from_target) = row
 
         kyori    = int(kyori_raw)
         furlongs = kyori / 200.0
         race_pci = float(race_pci_raw) if race_pci_raw is not None else None
+        if pci_from_target:
+            pci_target_count += 1
+        elif race_pci is not None:
+            pci_calc_count += 1
 
         style = _derive_running_style(
             int(jyuni4c or 0), int(jyuni3c or 0), int(jyuni2c or 0),
@@ -297,6 +314,8 @@ def calc_one_day(
         print(f"  {date_str}: 脚質算出不可（直線コース等）{no_style} 件 → pace_dev=0")
     if no_pci:
         print(f"  {date_str}: race_pci算出不可（haron3l未設定等）{no_pci} 件 → pace_dev=0")
+    if pci_target_count or pci_calc_count:
+        print(f"  {date_str}: PCI source: target={pci_target_count} / calc={pci_calc_count}")
 
     return {'total': total, 'nonzero': nonzero}
 
