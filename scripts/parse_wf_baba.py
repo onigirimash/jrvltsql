@@ -44,6 +44,10 @@ WF_DATA_ROOT = Path(r"C:\TFJV\W5_DATA")
 # JRA 場コード (01-10 のみ対象)
 VALID_JYO = {f"{i:02d}" for i in range(1, 11)}
 
+# WF7独自コード → JV-Dataコード変換テーブル
+# WF7: 0=良, 1=稍重, 2=重  /  JV-Data: 1=良, 2=稍重, 3=重
+WF7_TO_JVDATA = {"0": "1", "1": "2", "2": "3"}
+
 
 def parse_wf7_file(filepath: Path) -> Dict[Tuple[str, int, int], str]:
     """
@@ -53,7 +57,8 @@ def parse_wf7_file(filepath: Path) -> Dict[Tuple[str, int, int], str]:
       pos6 = セッションフラグ: '0'=開催前(朝確認) '1'=開催中(レース時)
       pos7 = 馬場状態コード:   '0'=良 '1'=稍重 '2'=重 ('9'=未計測)
 
-    セッション='1' かつ 有効コード('0'-'3')の最後のブロックを採用する。
+    セッション='1' かつ 有効コードの最後のブロックを採用する。
+    WF7コードはJV-Dataコードに変換して返す（WF7_TO_JVDATA参照）。
     WF7 は芝・ダートを一本化した統合コードのため返値は1値。
     """
     last_cond: Dict[Tuple[str, int, int], str] = {}
@@ -81,8 +86,9 @@ def parse_wf7_file(filepath: Path) -> Dict[Tuple[str, int, int], str]:
                         break
 
                     # セッション='1'（開催中）かつ有効な馬場コードのみ採用
-                    if blk[6] == "1" and blk[7] in "0123":
-                        last_cond[(jyo, kaiji, nichiji)] = blk[7]
+                    # WF7コード → JV-Dataコードに変換してから格納
+                    if blk[6] == "1" and blk[7] in WF7_TO_JVDATA:
+                        last_cond[(jyo, kaiji, nichiji)] = WF7_TO_JVDATA[blk[7]]
 
                     pos += 8
     except OSError as e:
