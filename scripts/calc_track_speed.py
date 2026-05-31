@@ -50,25 +50,20 @@ _CUSHION_COEF    = 0.12
 _DIRT_MOIST_MEAN = 5.9
 _DIRT_MOIST_COEF = 0.095
 
-# クラス区分の CASE 式（SQL 埋め込み用）
-_CLASS_GROUP_CASE = """
+# class_code → クラス区分 CASE 式（nl_se.class_codeベース）
+# grade_code='E'（地方交流）は class_code が同じため cls1〜cls3 に自動包含
+_CLS_CASE = """
     CASE
-      WHEN TRIM(ra.gradecd) IN ('A','B')  THEN 'cls5'
-      WHEN TRIM(ra.gradecd) = 'C'         THEN 'cls4'
-      WHEN TRIM(ra.gradecd) IN ('L','H','G') THEN 'cls3'
-      WHEN COALESCE(
-             NULLIF(ra.jyokencd1,'000'), NULLIF(ra.jyokencd2,'000'),
-             NULLIF(ra.jyokencd3,'000'), NULLIF(ra.jyokencd4,'000'),
-             NULLIF(ra.jyokencd5,'000'), 'OP'
-           ) IN ('010','005','016')         THEN 'cls1'
-      WHEN COALESCE(
-             NULLIF(ra.jyokencd1,'000'), NULLIF(ra.jyokencd2,'000'),
-             NULLIF(ra.jyokencd3,'000'), NULLIF(ra.jyokencd4,'000'),
-             NULLIF(ra.jyokencd5,'000'), 'OP'
-           ) = '703'                        THEN 'cls2'
-      ELSE 'cls3'
+      WHEN class_code IN ('195','179') THEN 'cls5'
+      WHEN class_code = '163'          THEN 'cls4'
+      WHEN class_code IN ('67','115','131') THEN 'cls3'
+      WHEN class_code IN ('23','43')   THEN 'cls2'
+      WHEN class_code IN ('7','15')    THEN 'cls1'
+      ELSE NULL
     END
 """
+# 有効な class_code 値（IN句用）
+_CLS_CODES = "('195','179','163','67','115','131','23','43','7','15')"
 
 # ──────────────────────────────────────────────
 # [A] 日次 track_index 用 SQL（既存ロジック）
@@ -245,15 +240,15 @@ ALTER TABLE nl_ra
 """
 
 _SQL_PER_RACE = """
-WITH cur_races AS (
-    -- 当日レースごとの上位3頭平均タイム
+WITH cur_raw AS (
+    -- 当日レース × 上位3頭: タイムと class_code を同時取得
     SELECT
         ra.year, ra.monthday, ra.jyocd, ra.kaiji, ra.nichiji, ra.racenum,
         ra.kyori,
         CASE WHEN LEFT(ra.trackcd,1)='1' THEN 'T'
              WHEN LEFT(ra.trackcd,1)='2' THEN 'D'
              ELSE 'J' END                                          AS surface,
-        {class_group_case}                                         AS class_group,
+        MIN(se.class_code)                                         AS class_code,
         AVG(FLOOR(se.time/100)*60 + MOD(se.time::numeric,100))    AS top3_sec,
         COUNT(*)                                                   AS n3
     FROM nl_ra ra
@@ -266,18 +261,28 @@ WITH cur_races AS (
       AND LEFT(ra.trackcd,1) IN ('1','2')
       AND se.time > 0
     GROUP BY ra.year, ra.monthday, ra.jyocd, ra.kaiji, ra.nichiji, ra.racenum,
-             ra.kyori, ra.trackcd, ra.gradecd,
-             ra.jyokencd1, ra.jyokencd2, ra.jyokencd3, ra.jyokencd4, ra.jyokencd5
-    HAVING COUNT(*) = 3
+             ra.kyori, ra.trackcd
+    HAVING COUNT(*) = 3 AND MIN(se.class_code) IN {cls_codes}
 ),
-hist_races AS (
-    -- 過去5年の同条件レースごとの上位3頭平均タイム
+cur_races AS (
+    SELECT *,
+        CASE
+          WHEN class_code IN ('195','179') THEN 'cls5'
+          WHEN class_code = '163'          THEN 'cls4'
+          WHEN class_code IN ('67','115','131') THEN 'cls3'
+          WHEN class_code IN ('23','43')   THEN 'cls2'
+          WHEN class_code IN ('7','15')    THEN 'cls1'
+        END                                                        AS class_group
+    FROM cur_raw
+),
+hist_raw AS (
+    -- 過去N年のレース × 上位3頭: タイムと class_code を同時取得
     SELECT
         ra.jyocd, ra.kyori,
         CASE WHEN LEFT(ra.trackcd,1)='1' THEN 'T'
              WHEN LEFT(ra.trackcd,1)='2' THEN 'D'
              ELSE 'J' END                                          AS surface,
-        {class_group_case}                                         AS class_group,
+        MIN(se.class_code)                                         AS class_code,
         AVG(FLOOR(se.time/100)*60 + MOD(se.time::numeric,100))    AS top3_sec
     FROM nl_ra ra
     JOIN nl_se se
@@ -289,21 +294,42 @@ hist_races AS (
       AND ra.year >= :ref_year
       AND ra.year*10000 + ra.monthday < :ref_date
       AND se.time > 0
-    GROUP BY ra.jyocd, ra.kyori, ra.trackcd, ra.gradecd,
-             ra.jyokencd1, ra.jyokencd2, ra.jyokencd3, ra.jyokencd4, ra.jyokencd5,
-             ra.year, ra.monthday, ra.racenum
+      AND se.class_code IN {cls_codes}
+    GROUP BY ra.jyocd, ra.kyori, ra.trackcd, ra.year, ra.monthday, ra.racenum
     HAVING COUNT(*) = 3
 ),
+hist_races AS (
+    SELECT jyocd, kyori, surface,
+        CASE
+          WHEN class_code IN ('195','179') THEN 'cls5'
+          WHEN class_code = '163'          THEN 'cls4'
+          WHEN class_code IN ('67','115','131') THEN 'cls3'
+          WHEN class_code IN ('23','43')   THEN 'cls2'
+          WHEN class_code IN ('7','15')    THEN 'cls1'
+        END                                                        AS class_group,
+        top3_sec
+    FROM hist_raw
+),
 hist_exact AS (
-    -- 完全一致の中央値
+    -- Step1: 完全一致（同クラス×同場×同距離）
     SELECT jyocd, kyori, surface, class_group,
            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY top3_sec) AS median_sec,
            COUNT(*)                                               AS n
     FROM hist_races
+    WHERE class_group IS NOT NULL
     GROUP BY jyocd, kyori, surface, class_group
 ),
+hist_exact_cls3 AS (
+    -- Step2: cls3 完全一致（cls4/cls5 のフォールバック用）
+    SELECT jyocd, kyori, surface,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY top3_sec) AS median_sec,
+           COUNT(*)                                               AS n
+    FROM hist_races
+    WHERE class_group = 'cls3'
+    GROUP BY jyocd, kyori, surface
+),
 hist_fallback AS (
-    -- 距離±200m 補完（距離比でスケール）
+    -- Step3: 同クラス 距離±200m（距離比スケール）
     SELECT cr.jyocd, cr.kyori, cr.surface, cr.class_group,
            PERCENTILE_CONT(0.5) WITHIN GROUP (
                ORDER BY hr.top3_sec * cr.kyori::float / hr.kyori::float
@@ -311,12 +337,25 @@ hist_fallback AS (
            COUNT(*) AS n
     FROM cur_races cr
     JOIN hist_races hr
-      ON cr.jyocd        = hr.jyocd
-     AND cr.surface      = hr.surface
-     AND cr.class_group  = hr.class_group
-     AND hr.kyori       != cr.kyori
-     AND ABS(hr.kyori - cr.kyori) <= 200
+      ON cr.jyocd=hr.jyocd AND cr.surface=hr.surface
+     AND cr.class_group=hr.class_group
+     AND hr.kyori != cr.kyori AND ABS(hr.kyori - cr.kyori) <= 200
     GROUP BY cr.jyocd, cr.kyori, cr.surface, cr.class_group
+),
+hist_fallback_cls3 AS (
+    -- Step4: cls3 距離±200m（cls4/cls5 の最終SQLフォールバック）
+    SELECT cr.jyocd, cr.kyori, cr.surface,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (
+               ORDER BY hr.top3_sec * cr.kyori::float / hr.kyori::float
+           ) AS median_sec,
+           COUNT(*) AS n
+    FROM cur_races cr
+    JOIN hist_races hr
+      ON cr.jyocd=hr.jyocd AND cr.surface=hr.surface
+     AND hr.class_group='cls3'
+     AND hr.kyori != cr.kyori AND ABS(hr.kyori - cr.kyori) <= 200
+    WHERE cr.class_group IN ('cls4','cls5')
+    GROUP BY cr.jyocd, cr.kyori, cr.surface
 )
 SELECT
     cr.jyocd,
@@ -326,20 +365,30 @@ SELECT
     cr.class_group,
     cr.top3_sec,
     COALESCE(
-        CASE WHEN he.n >= :min_samples THEN he.median_sec END,
-        CASE WHEN hf.n >= :min_samples THEN hf.median_sec END
+        CASE WHEN he.n  >= :min_samples THEN he.median_sec END,
+        CASE WHEN cr.class_group IN ('cls4','cls5')
+              AND he3.n >= :min_samples THEN he3.median_sec END,
+        CASE WHEN hf.n  >= :min_samples THEN hf.median_sec END,
+        CASE WHEN cr.class_group IN ('cls4','cls5')
+              AND hf3.n >= :min_samples THEN hf3.median_sec END
     )                                        AS hist_median,
     COALESCE(he.n, 0)                        AS exact_n,
     COALESCE(hf.n, 0)                        AS fallback_n,
-    CASE WHEN he.n >= :min_samples THEN 'exact'
-         WHEN hf.n >= :min_samples THEN 'dist200'
+    CASE WHEN he.n  >= :min_samples                                            THEN 'exact'
+         WHEN cr.class_group IN ('cls4','cls5') AND he3.n >= :min_samples      THEN 'cls3_exact'
+         WHEN hf.n  >= :min_samples                                            THEN 'dist200'
+         WHEN cr.class_group IN ('cls4','cls5') AND hf3.n >= :min_samples      THEN 'cls3_dist'
          ELSE 'no_data'
     END                                      AS fallback_type
 FROM cur_races cr
-LEFT JOIN hist_exact   he ON cr.jyocd=he.jyocd AND cr.kyori=he.kyori
-                          AND cr.surface=he.surface AND cr.class_group=he.class_group
-LEFT JOIN hist_fallback hf ON cr.jyocd=hf.jyocd AND cr.kyori=hf.kyori
-                           AND cr.surface=hf.surface AND cr.class_group=hf.class_group
+LEFT JOIN hist_exact         he  ON cr.jyocd=he.jyocd  AND cr.kyori=he.kyori
+                                AND cr.surface=he.surface AND cr.class_group=he.class_group
+LEFT JOIN hist_exact_cls3    he3 ON cr.jyocd=he3.jyocd AND cr.kyori=he3.kyori
+                                AND cr.surface=he3.surface
+LEFT JOIN hist_fallback      hf  ON cr.jyocd=hf.jyocd  AND cr.kyori=hf.kyori
+                                AND cr.surface=hf.surface AND cr.class_group=hf.class_group
+LEFT JOIN hist_fallback_cls3 hf3 ON cr.jyocd=hf3.jyocd AND cr.kyori=hf3.kyori
+                                AND cr.surface=hf3.surface
 ORDER BY cr.jyocd, cr.racenum
 """
 
@@ -491,10 +540,11 @@ def _ensure_per_race_cols(conn: pg8000.native.Connection) -> None:
 def calc_per_race(conn: pg8000.native.Connection, target: date) -> list[dict]:
     """当日の全レースについて per_race_factor を計算し nl_ra を UPDATE する。"""
     year, monthday = _to_year_monthday(target)
+    race_date_str  = target.strftime('%Y%m%d')
     ref_date       = year * 10000 + monthday
     ref_year       = year - _LOOKBACK_YEARS
 
-    sql = _SQL_PER_RACE.format(class_group_case=_CLASS_GROUP_CASE)
+    sql = _SQL_PER_RACE.format(cls_codes=_CLS_CODES)
 
     rows = conn.run(
         sql,
@@ -502,6 +552,15 @@ def calc_per_race(conn: pg8000.native.Connection, target: date) -> list[dict]:
         ref_date=ref_date, ref_year=ref_year,
         min_samples=_MIN_SAMPLES,
     )
+
+    # Step5フォールバック用: 当日の日次 track_index を先読み
+    ti_rows = conn.run(
+        "SELECT jyocd, surface, track_index FROM nl_track_speed WHERE race_date = :rd",
+        rd=race_date_str,
+    )
+    ti_cache: dict[tuple, float] = {
+        (r[0], r[1]): float(r[2]) for r in ti_rows if r[2] is not None
+    }
 
     results = []
     no_data_count = 0
@@ -520,12 +579,17 @@ def calc_per_race(conn: pg8000.native.Connection, target: date) -> list[dict]:
         if hist_median and top3_sec and top3_sec > 0:
             factor = round(hist_median / top3_sec * 100, 2)
         else:
-            factor = None
-            no_data_count += 1
+            # Step5: track_index を最終フォールバック
+            ti = ti_cache.get((jyocd, surface))
+            if ti is not None:
+                factor        = round(ti, 2)
+                fallback_type = 'track_idx'
+            else:
+                factor = None
+                no_data_count += 1
 
-        used_n = exact_n if fallback_type == 'exact' else fallback_n
+        used_n = exact_n if fallback_type in ('exact', 'cls3_exact') else fallback_n
 
-        # nl_ra の kaiji/nichiji は1文字なのでクエリで取得しない → monthday/year/jyocd/racenum で UPDATE
         conn.run(
             _SQL_UPDATE_PER_RACE,
             factor=factor,

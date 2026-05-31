@@ -4,14 +4,16 @@
 パフォーマンス指数計算スクリプト（実力点数化 Step 4）
 
 各種補正値（time_dev, futan_dev, disadv_dev, pace_dev, bias_dev）を集計し
-馬場指数（track_index）による乗算補正を加えて perf_index を計算する。
+馬場係数（per_race_factor）による乗算補正を加えて perf_index を計算する。
 
 計算式:
-  perf_index = time_dev × (track_index / 100)
+  perf_index = time_dev × (track_factor / 100)
              + futan_dev + disadv_dev + pace_dev + bias_dev
 
-  track_index : nl_track_speed から (race_date, jyocd, surface) で検索
-                取得できない場合は 100（補正なし）を使用
+  track_factor 優先順位:
+    1. nl_ra.per_race_factor  （レース単位, クラス×距離×芝ダ補正済み）
+    2. nl_track_speed.track_index （日次平均, per_race_factor が NULL の場合）
+    3. 100.0 （両方取得できない場合）
 
   surface 変換: nl_ra.trackcd 先頭文字
     '1' → 'T'（芝）
@@ -36,9 +38,10 @@ import pg8000.native
 # SQL
 # ──────────────────────────────────────────────────────
 
-# CTE で race ごとの馬場指数を解決し、一括 UPDATE
+# CTE で race ごとの馬場係数を解決し、一括 UPDATE
+# per_race_factor 優先 → track_index フォールバック → 100
 _SQL_UPDATE = """
-WITH race_surface AS (
+WITH race_info AS (
     SELECT DISTINCT
         year, monthday, jyocd, racenum,
         CASE LEFT(trackcd, 1)
@@ -52,15 +55,24 @@ WITH race_surface AS (
 ),
 track_idx AS (
     SELECT
-        rs.jyocd,
-        rs.racenum,
-        COALESCE(MAX(ts.track_index), 100) AS track_index
-    FROM race_surface rs
+        ri.jyocd,
+        ri.racenum,
+        COALESCE(
+            MAX(ra.per_race_factor),
+            MAX(ts.track_index),
+            100
+        ) AS track_index
+    FROM race_info ri
+    LEFT JOIN nl_ra ra
+      ON ra.year     = :year
+     AND ra.monthday = :monthday
+     AND ra.jyocd    = ri.jyocd
+     AND ra.racenum  = ri.racenum
     LEFT JOIN nl_track_speed ts
       ON ts.race_date = :race_date
-     AND ts.jyocd    = rs.jyocd
-     AND ts.surface  = rs.surface
-    GROUP BY rs.jyocd, rs.racenum
+     AND ts.jyocd    = ri.jyocd
+     AND ts.surface  = ri.surface
+    GROUP BY ri.jyocd, ri.racenum
 )
 UPDATE nl_performance p
 SET perf_index = ROUND((
