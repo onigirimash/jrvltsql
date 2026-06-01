@@ -205,6 +205,8 @@ def _calc_current(
     recent_n: int,
     best_n: int,
     best_years: int,
+    recent_weight: float = 0.7,
+    best_weight: float = 0.3,
 ) -> float | None:
     """current_index を計算する。"""
     cutoff = today - timedelta(days=best_years * 365)
@@ -212,7 +214,7 @@ def _calc_current(
     best   = _career_best(races, cutoff, best_n)
 
     if recent is not None and best is not None:
-        return round(recent * 0.7 + best * 0.3, 3)
+        return round(recent * recent_weight + best * best_weight, 3)
     if recent is not None:
         return round(recent, 3)
     if best is not None:
@@ -231,12 +233,13 @@ def calc_current_index(
     best_n: int,
     best_years: int,
     as_of: date | None = None,
+    recent_weight: float = 0.7,
+    best_weight: float = 0.3,
 ) -> dict:
     today = as_of if as_of is not None else date.today()
     as_of_year     = today.year
     as_of_monthday = today.month * 100 + today.day
 
-    # perf_index のグローバル統計を取得（norm_index スケールへの正規化に使用）
     stat_row = conn.run(_SQL_PERF_STATS,
                         as_of_year=as_of_year, as_of_monthday=as_of_monthday)[0]
     perf_mean = float(stat_row[0])
@@ -245,13 +248,11 @@ def calc_current_index(
         perf_std = 1.0
     print(f"  perf_index 統計: mean={perf_mean:.4f}  std={perf_std:.4f}")
     print(f"  正規化式: (perf_index - {perf_mean:.4f}) / {perf_std:.4f} × 10 + 50")
+    print(f"  混合係数: 直近={recent_weight} / ベスト={best_weight}")
 
-    # 全出走履歴を取得（as_of_date 以前）
     rows = conn.run(_SQL_FETCH, as_of_year=as_of_year, as_of_monthday=as_of_monthday)
     print(f"  取得: {len(rows)} 行")
 
-    # (kettonum, dist_cat, surface) → [(race_date, norm_scaled)] 日付降順
-    # norm_scaled = (perf_index - global_mean) / global_std * 10 + 50
     horse_races: dict[tuple, list] = defaultdict(list)
     for row in rows:
         kettonum, year, monthday, kyori, track_first, perf_index = row
@@ -263,7 +264,6 @@ def calc_current_index(
             (race_date, norm_scaled)
         )
 
-    # nl_horse_index の全キーを取得
     keys = conn.run(_SQL_KEYS)
     print(f"  nl_horse_index エントリ数: {len(keys)}")
 
@@ -273,7 +273,10 @@ def calc_current_index(
     for kettonum, dist_cat, surface in keys:
         races = horse_races.get((str(kettonum).strip(), dist_cat.strip(), surface.strip()), [])
 
-        current = _calc_current(races, today, decay, recent_n, best_n, best_years)
+        current = _calc_current(
+            races, today, decay, recent_n, best_n, best_years,
+            recent_weight=recent_weight, best_weight=best_weight,
+        )
 
         if current is None:
             conn.run(_SQL_CLEAR,
@@ -306,6 +309,10 @@ def main() -> None:
                         help='キャリアベスト対象年数（デフォルト: 2）')
     parser.add_argument('--as-of-date', default=None, metavar='YYYYMMDD',
                         help='この日付以降のレースを除外（ルックアヘッド防止。省略時は今日）')
+    parser.add_argument('--recent-weight', type=float, default=0.7, metavar='W',
+                        help='直近走の混合係数（デフォルト: 0.7）')
+    parser.add_argument('--best-weight',   type=float, default=0.3, metavar='W',
+                        help='キャリアベストの混合係数（デフォルト: 0.3）')
     parser.add_argument('--pg-host',     default=os.environ.get('POSTGRES_HOST',     'localhost'))
     parser.add_argument('--pg-port',     default=os.environ.get('POSTGRES_PORT',     '5432'))
     parser.add_argument('--pg-database', default=os.environ.get('POSTGRES_DATABASE', 'keiba'))
@@ -329,6 +336,8 @@ def main() -> None:
             best_n=args.best_n,
             best_years=args.best_years,
             as_of=as_of,
+            recent_weight=args.recent_weight,
+            best_weight=args.best_weight,
         )
         print(f"\n完了: {stats['updated']} 件を更新、"
               f"{stats['no_races']} 件はレースなしのため NULL。")
