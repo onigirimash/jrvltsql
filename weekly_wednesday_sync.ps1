@@ -228,7 +228,7 @@ Invoke-Step    "PERF_IDX"    (Join-Path $root "scripts\calc_performance_index.py
 
 # ── Index pipeline (all data) ─────────────────────────────────────────────────
 Invoke-StepAll "HORSE_IDX"   (Join-Path $root "scripts\calc_horse_index.py")
-Invoke-StepAll "CURRENT_IDX" (Join-Path $root "scripts\calc_current_index.py") @("--recent-weight", "0.4", "--best-weight", "0.6")
+Invoke-StepAll "CURRENT_IDX" (Join-Path $root "scripts\calc_current_index.py")
 Invoke-StepAll "RELIABILITY" (Join-Path $root "scripts\calc_reliability.py")
 
 Write-Log "=== Wednesday sync ALL COMPLETE ==="
