@@ -33,7 +33,7 @@ nl_performance の perf_index を norm_index スケール（avg=50, std=10）に
 Usage:
     py -3.12-32 scripts/calc_current_index.py [options]
 
-    --decay N           減衰定数（日数、デフォルト: 180）
+    --decay N           減衰定数（日数、デフォルト: 270）
     --recent-n N        直近N走（デフォルト: 5）
     --best-n N          キャリアベストN走（デフォルト: 3）
     --best-years N      キャリアベスト対象年数（デフォルト: 2）
@@ -299,8 +299,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description='時系列補正計算 (nl_horse_index.current_index UPDATE)',
     )
-    parser.add_argument('--decay',      type=float, default=180.0, metavar='DAYS',
-                        help='exp 減衰定数（日数、デフォルト: 180）')
+    parser.add_argument('--decay',      type=float, default=270.0, metavar='DAYS',
+                        help='exp 減衰定数（日数、デフォルト: 270）')
     parser.add_argument('--recent-n',   type=int,   default=5,     metavar='N',
                         help='直近N走（デフォルト: 5）')
     parser.add_argument('--best-n',     type=int,   default=3,     metavar='N',
