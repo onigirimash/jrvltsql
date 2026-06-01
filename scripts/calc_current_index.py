@@ -10,24 +10,28 @@ nl_performance の perf_index を norm_index スケール（avg=50, std=10）に
   norm_scaled = (perf_index - global_mean) / global_std × 10 + 50
   これにより current_index が norm_index と同一スケール（avg≈50, std≈8〜9）になる。
 
-算出式:
-  current_index = 直近5走加重平均 × 0.7 + キャリアベスト3走平均 × 0.3
+算出式（集約方法C・ABテスト採用）:
+  current_index = 直近N走最大値 × 0.5
+               + 直近N走加重平均 × 0.2
+               + キャリアベスト3走平均 × 0.3
 
-直近5走加重平均:
-  対象: 同一 (distance_cat, surface) の直近5走（perf_index IS NOT NULL）
-  重み: exp(-経過日数 / 180)
+直近N走最大値:
+  対象: 同一 (distance_cat, surface) の直近N走（perf_index IS NOT NULL）
+  計算: norm_scaled の最大値
+
+直近N走加重平均:
+  対象: 同一 (distance_cat, surface) の直近N走（perf_index IS NOT NULL）
+  重み: exp(-経過日数 / decay)
   計算: Σ(norm_scaled × weight) / Σ(weight)
-  ※ 5走未満でも得られた走数で計算
+  ※ N走未満でも得られた走数で計算
 
 キャリアベスト3走平均:
   対象: 同一 (distance_cat, surface) の直近2年以内のレース
   選択: norm_scaled 上位3走の単純平均
   ※ 3走未満でも得られた走数で計算
 
-合成フォールバック:
-  両方あり  → 0.7 × 直近加重 + 0.3 × キャリアベスト
-  直近のみ  → 直近加重
-  ベストのみ → キャリアベスト
+合成フォールバック（いずれかの成分が欠損した場合は残りの成分で重みを正規化）:
+  全成分あり → 最大×0.5 + 直近加重×0.2 + キャリアベスト×0.3
   なし       → NULL（更新しない）
 
 Usage:
@@ -198,6 +202,17 @@ def _career_best(
     return sum(pi for _, pi in top_n) / len(top_n)
 
 
+def _recent_max(
+    races: list[tuple[date, float]],
+    n: int,
+) -> float | None:
+    """直近N走のnorm_scaled最大値を返す。"""
+    recent = races[:n]
+    if not recent:
+        return None
+    return max(pi for _, pi in recent)
+
+
 def _calc_current(
     races: list[tuple[date, float]],
     today: date,
@@ -205,21 +220,37 @@ def _calc_current(
     recent_n: int,
     best_n: int,
     best_years: int,
-    recent_weight: float = 0.7,
+    recent_weight: float = 0.2,
     best_weight: float = 0.3,
+    max_weight: float = 0.5,
 ) -> float | None:
-    """current_index を計算する。"""
-    cutoff = today - timedelta(days=best_years * 365)
-    recent = _weighted_recent(races, today, decay, recent_n)
-    best   = _career_best(races, cutoff, best_n)
+    """current_index を計算する。
+    formula = recent_max × max_weight
+            + weighted_avg × recent_weight
+            + career_best  × best_weight
+    いずれかの成分が欠損した場合は残りの成分で重みを正規化して計算する。
+    """
+    cutoff      = today - timedelta(days=best_years * 365)
+    recent_wav  = _weighted_recent(races, today, decay, recent_n)
+    recent_mx   = _recent_max(races, recent_n) if max_weight > 0 else None
+    best        = _career_best(races, cutoff, best_n)
 
-    if recent is not None and best is not None:
-        return round(recent * recent_weight + best * best_weight, 3)
-    if recent is not None:
-        return round(recent, 3)
-    if best is not None:
-        return round(best, 3)
-    return None
+    # 有効な (値, 重み) のペアを収集
+    parts: list[tuple[float, float]] = []
+    if max_weight    > 0 and recent_mx  is not None:
+        parts.append((recent_mx,  max_weight))
+    if recent_weight > 0 and recent_wav is not None:
+        parts.append((recent_wav, recent_weight))
+    if best_weight   > 0 and best       is not None:
+        parts.append((best,       best_weight))
+
+    if not parts:
+        return None
+
+    total_w = sum(w for _, w in parts)
+    if total_w == 0:
+        return None
+    return round(sum(v * w / total_w for v, w in parts), 3)
 
 
 # ──────────────────────────────────────────────────────
@@ -233,8 +264,9 @@ def calc_current_index(
     best_n: int,
     best_years: int,
     as_of: date | None = None,
-    recent_weight: float = 0.7,
+    recent_weight: float = 0.2,
     best_weight: float = 0.3,
+    max_weight: float = 0.5,
 ) -> dict:
     today = as_of if as_of is not None else date.today()
     as_of_year     = today.year
@@ -248,7 +280,7 @@ def calc_current_index(
         perf_std = 1.0
     print(f"  perf_index 統計: mean={perf_mean:.4f}  std={perf_std:.4f}")
     print(f"  正規化式: (perf_index - {perf_mean:.4f}) / {perf_std:.4f} × 10 + 50")
-    print(f"  混合係数: 直近={recent_weight} / ベスト={best_weight}")
+    print(f"  混合係数: 最大={max_weight} / 直近={recent_weight} / ベスト={best_weight}")
 
     rows = conn.run(_SQL_FETCH, as_of_year=as_of_year, as_of_monthday=as_of_monthday)
     print(f"  取得: {len(rows)} 行")
@@ -276,6 +308,7 @@ def calc_current_index(
         current = _calc_current(
             races, today, decay, recent_n, best_n, best_years,
             recent_weight=recent_weight, best_weight=best_weight,
+            max_weight=max_weight,
         )
 
         if current is None:
@@ -309,10 +342,12 @@ def main() -> None:
                         help='キャリアベスト対象年数（デフォルト: 2）')
     parser.add_argument('--as-of-date', default=None, metavar='YYYYMMDD',
                         help='この日付以降のレースを除外（ルックアヘッド防止。省略時は今日）')
-    parser.add_argument('--recent-weight', type=float, default=0.7, metavar='W',
-                        help='直近走の混合係数（デフォルト: 0.7）')
+    parser.add_argument('--recent-weight', type=float, default=0.2, metavar='W',
+                        help='直近走加重平均の混合係数（デフォルト: 0.2 ＝方法C）')
     parser.add_argument('--best-weight',   type=float, default=0.3, metavar='W',
-                        help='キャリアベストの混合係数（デフォルト: 0.3）')
+                        help='キャリアベストの混合係数（デフォルト: 0.3 ＝方法C）')
+    parser.add_argument('--max-weight',    type=float, default=0.5, metavar='W',
+                        help='直近N走最大値の混合係数（デフォルト: 0.5 ＝方法C）')
     parser.add_argument('--pg-host',     default=os.environ.get('POSTGRES_HOST',     'localhost'))
     parser.add_argument('--pg-port',     default=os.environ.get('POSTGRES_PORT',     '5432'))
     parser.add_argument('--pg-database', default=os.environ.get('POSTGRES_DATABASE', 'keiba'))
@@ -338,6 +373,7 @@ def main() -> None:
             as_of=as_of,
             recent_weight=args.recent_weight,
             best_weight=args.best_weight,
+            max_weight=args.max_weight,
         )
         print(f"\n完了: {stats['updated']} 件を更新、"
               f"{stats['no_races']} 件はレースなしのため NULL。")
