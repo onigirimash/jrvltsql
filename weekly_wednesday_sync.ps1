@@ -119,7 +119,7 @@ function Invoke-Step {
 
 # Helper: run py script with no date arg (whole-dataset steps)
 function Invoke-StepAll {
-    param([string]$Label, [string]$Script)
+    param([string]$Label, [string]$Script, [string[]]$ExtraArgs = @())
     Write-Log "=== $Label START ==="
     if (-not (Test-Path $Script)) { Write-Log "${Label}: $Script not found - skip" "WARN"; return }
     $pyArgs = @($Script,
@@ -127,7 +127,7 @@ function Invoke-StepAll {
         "--pg-port",     ([string]$env:POSTGRES_PORT),
         "--pg-database", $env:POSTGRES_DATABASE,
         "--pg-user",     $env:POSTGRES_USER,
-        "--pg-password", $pgPassword)
+        "--pg-password", $pgPassword) + $ExtraArgs
     $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     & py "-3.12-32" @pyArgs 2>&1 | ForEach-Object {
         $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Label, $_
@@ -228,7 +228,7 @@ Invoke-Step    "PERF_IDX"    (Join-Path $root "scripts\calc_performance_index.py
 
 # ── Index pipeline (all data) ─────────────────────────────────────────────────
 Invoke-StepAll "HORSE_IDX"   (Join-Path $root "scripts\calc_horse_index.py")
-Invoke-StepAll "CURRENT_IDX" (Join-Path $root "scripts\calc_current_index.py")
+Invoke-StepAll "CURRENT_IDX" (Join-Path $root "scripts\calc_current_index.py") @("--recent-weight", "0.4", "--best-weight", "0.6")
 Invoke-StepAll "RELIABILITY" (Join-Path $root "scripts\calc_reliability.py")
 
 Write-Log "=== Wednesday sync ALL COMPLETE ==="
