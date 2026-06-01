@@ -4,8 +4,13 @@
 信頼度計算スクリプト（実力点数化 Step 7）
 
 馬全体の出走回数合計から信頼度を算出し
-adjusted_index = current_index × reliability + 50 × (1 - reliability) を計算して nl_horse_index へ保存する。
-（信頼度が低い馬は平均値50へ縮約。距離区分・馬場に関係なく、その馬の全出走回数を信頼度の基準にする）
+adjusted_index を計算して nl_horse_index へ保存する。
+
+縮約先: クラス別平均 current_index（50固定から変更）
+  adjusted_index = current_index × reliability + class_avg × (1 - reliability)
+
+  class_avg: 各馬の最新レースの class_code 別の current_index 平均値
+  フォールバック: class_code 不明の場合は全馬の current_index 平均
 
 出走回数 → 信頼度 の線形補間:
   1戦  → 0.500
@@ -13,10 +18,6 @@ adjusted_index = current_index × reliability + 50 × (1 - reliability) を計�
   5戦  → 0.850   （3〜5戦区間: +0.075/戦）
   10戦 → 1.000   （5〜10戦区間: +0.03/戦）
   10戦以上 → 1.0 固定
-
-対象となる出走回数:
-  nl_performance.perf_index IS NOT NULL のレースのみカウント
-  （計測できていないレースは除外）
 
 Usage:
     py -3.12-32 scripts/calc_reliability.py [options]
@@ -26,6 +27,7 @@ Usage:
 
 import argparse
 import os
+from collections import defaultdict
 
 import pg8000.native
 
@@ -33,7 +35,7 @@ import pg8000.native
 # SQL
 # ──────────────────────────────────────────────────────
 
-# 馬全体（distance_cat・surface を問わない）の出走回数を一括集計
+# 馬全体の出走回数を一括集計（perf_index 計測済みレースのみ）
 _SQL_RACE_COUNT = """
 SELECT kettonum, COUNT(*) AS race_count
 FROM (
@@ -45,9 +47,9 @@ FROM (
       AND ra.jyocd     = se.jyocd
       AND ra.racenum   = se.racenum
     JOIN nl_performance p
-      ON  p.year       = se.year
-      AND p.monthday   = se.monthday
-      AND p.jyocd      = se.jyocd
+      ON  p.year         = se.year
+      AND p.monthday     = se.monthday
+      AND p.jyocd        = se.jyocd
       AND p.racenum::int = se.racenum
       AND p.umaban::int  = se.umaban
     WHERE se.jyocd BETWEEN '01' AND '10'
@@ -57,6 +59,22 @@ FROM (
       AND p.perf_index IS NOT NULL
 ) sub
 GROUP BY kettonum
+"""
+
+# 各馬の最新レースの class_code を取得
+_SQL_LATEST_CLASS = """
+SELECT DISTINCT ON (TRIM(kettonum))
+    TRIM(kettonum) AS kettonum,
+    class_code
+FROM nl_se
+WHERE class_code IS NOT NULL
+  AND class_code <> ''
+ORDER BY TRIM(kettonum), year DESC, monthday DESC, racenum DESC
+"""
+
+_SQL_KEYS = """
+SELECT kettonum, distance_cat, surface, current_index
+FROM nl_horse_index
 """
 
 _SQL_UPDATE = """
@@ -73,15 +91,13 @@ WHERE kettonum     = :kettonum
 # 信頼度計算
 # ──────────────────────────────────────────────────────
 
-# 区間ごとの (min_races, max_races, min_rel, max_rel)
 _BREAKPOINTS = [
-    (1,  3,  0.5, 0.7),
-    (3,  5,  0.7, 0.85),
+    (1,  3,  0.5,  0.7),
+    (3,  5,  0.7,  0.85),
     (5, 10,  0.85, 1.0),
 ]
 
 def _race_count_to_reliability(count: int) -> float:
-    """出走回数から信頼度を線形補間で計算する。"""
     if count <= 0:
         return 0.5
     if count >= 10:
@@ -107,35 +123,61 @@ def _connect(args) -> pg8000.native.Connection:
 # ──────────────────────────────────────────────────────
 
 def calc_reliability(conn: pg8000.native.Connection) -> dict:
-    # 出走回数を集計（馬全体の合計）
+    # 1. 出走回数集計
     count_rows = conn.run(_SQL_RACE_COUNT)
-    count_map: dict[str, int] = {
-        str(k).strip(): int(c)
-        for k, c in count_rows
-    }
-    print(f"  出走回数集計: {len(count_map)} 頭（馬全体の合計出走回数）")
+    count_map: dict[str, int] = {str(k).strip(): int(c) for k, c in count_rows}
+    print(f"  出走回数集計: {len(count_map)} 頭")
 
-    # nl_horse_index の全エントリを対象に UPDATE
-    keys = conn.run(
-        "SELECT kettonum, distance_cat, surface, current_index FROM nl_horse_index"
-    )
+    # 2. 各馬の最新 class_code を取得
+    class_rows  = conn.run(_SQL_LATEST_CLASS)
+    horse_class: dict[str, str] = {str(k).strip(): str(c) for k, c in class_rows if c}
+    print(f"  class_code 取得: {len(horse_class)} 頭")
+
+    # 3. nl_horse_index の全エントリを取得（リストに保持）
+    keys = list(conn.run(_SQL_KEYS))
     print(f"  nl_horse_index エントリ数: {len(keys)}")
 
-    updated   = 0
+    # 4. クラス別の current_index 集計 → クラス平均を計算
+    class_idx: dict[str, list[float]] = defaultdict(list)
+    all_vals: list[float] = []
+    for kettonum, dist_cat, surface, current_index in keys:
+        if current_index is not None:
+            val = float(current_index)
+            all_vals.append(val)
+            cls = horse_class.get(str(kettonum).strip())
+            if cls:
+                class_idx[cls].append(val)
+
+    # クラス別平均（サンプル少ないクラスは全体平均にフォールバック）
+    global_avg: float = sum(all_vals) / len(all_vals) if all_vals else 50.0
+    class_avg: dict[str, float] = {}
+    for cls, vals in class_idx.items():
+        class_avg[cls] = sum(vals) / len(vals)
+
+    print(f"  全体平均: {global_avg:.3f}")
+    for cls in sorted(class_avg):
+        print(f"    class={cls}: avg={class_avg[cls]:.3f}  n={len(class_idx[cls])}")
+
+    # 5. adjusted_index を計算して UPDATE
+    updated    = 0
     no_current = 0
 
     for kettonum, dist_cat, surface, current_index in keys:
         race_count  = count_map.get(str(kettonum).strip(), 0)
         reliability = round(_race_count_to_reliability(race_count), 3)
 
-        if current_index is None:
-            adjusted = None
-        else:
-            adjusted = round(float(current_index) * reliability + 50.0 * (1.0 - reliability), 3)
-            updated += 1
+        cls          = horse_class.get(str(kettonum).strip())
+        shrink_to    = class_avg.get(cls, global_avg) if cls else global_avg
 
         if current_index is None:
+            adjusted = None
             no_current += 1
+        else:
+            adjusted = round(
+                float(current_index) * reliability + shrink_to * (1.0 - reliability),
+                3,
+            )
+            updated += 1
 
         conn.run(
             _SQL_UPDATE,
