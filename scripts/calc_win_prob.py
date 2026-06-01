@@ -43,7 +43,8 @@ import pg8000.native
 
 _DEFAULT_T       = 5.0
 _DEFAULT_DEBUT   = 3
-_DEFAULT_VERSION = '2.0'
+_DEFAULT_VERSION  = '2.0'
+_DEFAULT_NO_BIAS  = True   # pace_biasは廃止（相関係数が悪化したため）
 
 # 先行系カウント対象（逃げ+先行系の頭数でペース判定）
 _FRONT_KYAKU = {'逃げ', '先行', 'まくり'}
@@ -265,6 +266,7 @@ def calc_one_day(
     T: float,
     max_debut: int,
     logic_version: str,
+    no_pace_bias: bool = False,
 ) -> dict:
     """1日分の推定勝率を計算して nl_race_prediction へ保存する。"""
     year, monthday = _to_year_monthday(target)
@@ -303,19 +305,20 @@ def calc_one_day(
         if not horses:
             continue
 
-        # ペース想定: 逃げ+先行系の頭数で判定
-        front_count = sum(
-            1 for h in horses if h['prev_kyaku'] in _FRONT_KYAKU
-        )
-        scenario = _pace_scenario(front_count)
-
-        # 補正値を計算し adjusted_index に加算
-        adj_values  = [
+        # ペース想定: 逃げ+先行系の頭数で判定（--no-pace-bias 時は全て0）
+        adj_values = [
             float(h['adjusted_index']) if h['adjusted_index'] is not None else 0.0
             for h in horses
         ]
-        bias_scores = [_calc_pace_bias(scenario, h['prev_kyaku']) for h in horses]
-        adj_biased  = [a + b for a, b in zip(adj_values, bias_scores)]
+        if no_pace_bias:
+            bias_scores = [0.0] * len(horses)
+        else:
+            front_count = sum(
+                1 for h in horses if h['prev_kyaku'] in _FRONT_KYAKU
+            )
+            scenario    = _pace_scenario(front_count)
+            bias_scores = [_calc_pace_bias(scenario, h['prev_kyaku']) for h in horses]
+        adj_biased = [a + b for a, b in zip(adj_values, bias_scores)]
 
         probs       = _softmax(adj_biased, T)
         place_probs = _plackett_luce_place(probs)
@@ -370,6 +373,10 @@ def main() -> None:
                         metavar='N',       help=f'初出走馬除外閾値（デフォルト: {_DEFAULT_DEBUT}）')
     parser.add_argument('--logic-version', default=_DEFAULT_VERSION,
                         metavar='VER',     help=f'ロジックバージョン（デフォルト: {_DEFAULT_VERSION}）')
+    parser.add_argument('--no-pace-bias', action='store_true', default=_DEFAULT_NO_BIAS,
+                        help='脚質×ペース補正を無効化（デフォルト: True）')
+    parser.add_argument('--pace-bias', dest='no_pace_bias', action='store_false',
+                        help='脚質×ペース補正を有効化（ABテスト用）')
     parser.add_argument('--pg-host',     default=os.environ.get('POSTGRES_HOST',     'localhost'))
     parser.add_argument('--pg-port',     default=os.environ.get('POSTGRES_PORT',     '5432'))
     parser.add_argument('--pg-database', default=os.environ.get('POSTGRES_DATABASE', 'keiba'))
@@ -405,6 +412,7 @@ def main() -> None:
                 T=args.temperature,
                 max_debut=args.max_debut,
                 logic_version=args.logic_version,
+                no_pace_bias=args.no_pace_bias,
             )
             total_races  += stats['races']
             total_horses += stats['horses']
