@@ -105,6 +105,61 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install_tasks.ps1 -DbType po
 
 `daily_sync.bat` は通常データ更新用です。公式時系列オッズや全賭式速報オッズを継続蓄積する場合は、別途オッズ取得コマンドを実行してください。
 
+## TARGET CSV 週次同期（毎週月曜）
+
+`weekly_monday_sync.ps1` は毎週月曜朝 7:00 に実行し、先週末の開催成績を
+TARGET frontier JV から CSV 出力して PostgreSQL DB に取り込む。
+
+| ステップ | 処理 | スクリプト |
+| --- | --- | --- |
+| 1 | TARGET 起動 → seiseki CSV 出力（基本+単勝オッズ） | `target_csv_export.py --mode seiseki` |
+| 2 | seiseki CSV → nl_se 更新（着順・オッズ・上がり3F等） | `import_target_seiseki.py` |
+| 3 | TARGET → lap CSV 出力（成績画面・レースデータ） | `target_csv_export.py --mode lap` |
+| 4 | lap CSV → nl_target_race 更新（ラップ・PCI等） | `import_target_csv.py` |
+
+### 事前準備
+
+PGPASSWORD をユーザー環境変数に登録しておく（一度だけ実行）:
+
+```powershell
+[Environment]::SetEnvironmentVariable('PGPASSWORD', '<パスワード>', 'User')
+```
+
+### タスクスケジューラ登録（毎週月曜 07:00）
+
+PowerShell を **管理者として** 開き、以下を実行:
+
+```powershell
+$root   = "C:\Users\<username>\keiba\jrvltsql"   # ← 実際のパスに変更
+$action = New-ScheduledTaskAction `
+    -Execute    "powershell.exe" `
+    -Argument   "-NoProfile -ExecutionPolicy Bypass -File `"$root\weekly_monday_sync.ps1`"" `
+    -WorkingDirectory $root
+
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At "07:00"
+
+$settings = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
+    -StartWhenAvailable
+
+Register-ScheduledTask `
+    -TaskName   "JRA_WeeklyMondaySync" `
+    -Action     $action `
+    -Trigger    $trigger `
+    -Settings   $settings `
+    -RunLevel   Highest `
+    -Force
+```
+
+登録確認・手動実行:
+
+```powershell
+Get-ScheduledTask -TaskName "JRA_WeeklyMondaySync"
+Start-ScheduledTask -TaskName "JRA_WeeklyMondaySync"
+```
+
+ログは `logs/weekly_monday_*.log` に出力される（直近 30 件を自動ローテーション）。
+
 ## 詳細ドキュメント
 
 | ドキュメント | 内容 |

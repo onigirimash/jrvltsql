@@ -353,9 +353,8 @@ def set_output_path(dlg_hwnd: int, out_path: str) -> None:
 def select_output_mode(dlg_hwnd: int, mode: str) -> None:
     """
     TfmSeiOut のラジオボタン（Delphi TGroupButton）で出力モードを選択する。
-      mode='race'  → 成績データ（ユーザー設定）          ラップ・PCI・馬場状態
-      mode='kyaku' → 成績画面・レースデータ（ユーザー設定）脚質・クラスコード
-      mode='odds'  → 基本＋単勝オッズ
+      mode='seiseki' → 基本＋単勝オッズ          → import_target_seiseki.py
+      mode='lap'     → 成績画面・レースデータ（ユーザー設定）→ import_target_csv.py
     TGroupButton は TRadioGroup 内の各ボタンに対応し HWND を持つ。
     BM_CLICK で直接クリック可能。
     """
@@ -369,17 +368,15 @@ def select_output_mode(dlg_hwnd: int, mode: str) -> None:
     for b in grp_btns:
         print(f'    hwnd={b["hwnd"]} y={b["t"]}-{b["b"]}  txt={repr(b["txt"])}', flush=True)
 
-    if mode == 'race':
-        target = next((b for b in grp_btns
-                       if 'ユーザー設定' in b['txt'] and GAMEN not in b['txt']), None)
-    elif mode == 'kyaku':
-        target = next((b for b in grp_btns if GAMEN in b['txt']), None)
-    elif mode == 'odds':
-        # 基本＋単勝オッズ: 基本 と 単勝 を含む（フルセット+単勝オッズ は 基本 を含まない）
+    if mode == 'seiseki':
+        # 基本＋単勝オッズ: 基本 と 単勝 を含む（フルセット+単勝 は 基本 を含まない）
         target = next((b for b in grp_btns
                        if KIHON in b['txt'] and TANSHO in b['txt']), None)
+    elif mode == 'lap':
+        # 成績画面・レースデータ（ユーザー設定）: '画面' を含む
+        target = next((b for b in grp_btns if GAMEN in b['txt']), None)
     else:
-        raise ValueError(f'不明なモード: {mode!r}  (race / kyaku / odds)')
+        raise ValueError(f'不明なモード: {mode!r}  (seiseki / lap)')
 
     if target is None:
         raise RuntimeError(f'モード {mode!r} のラジオボタンが見つかりません')
@@ -654,8 +651,8 @@ def main() -> None:
     parser.add_argument('--no-launch', action='store_true')
     parser.add_argument('--restart',     action='store_true',
                         help='TARGETを再起動して初期状態にする（推奨）')
-    parser.add_argument('--mode', choices=['race', 'kyaku', 'odds'], default=None,
-                        help='race=成績画面・レースデータ(ユーザー設定) / kyaku=成績データ(ユーザー設定)')
+    parser.add_argument('--mode', choices=['seiseki', 'lap'], default=None,
+                        help='seiseki=基本+単勝オッズ / lap=成績画面・レースデータ(ユーザー設定)')
     parser.add_argument('--clear-ktlist', action='store_true',
                         help='KTList*.IDXを削除して開催選択を初期モード（全選択）で強制起動')
     parser.add_argument('--timeout',   type=float, default=30.0)
