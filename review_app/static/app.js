@@ -995,29 +995,7 @@ function buildRacePanel(r, raceHorses = []) {
       </div>
       <button class="btn btn-accent btn-sm" style="margin-top:.75rem"
               onclick="saveDisadvantage(${r.id}, event)">追加</button>
-      ${raceHorses.some(h => h.kettonum) ? `
-      <div class="divider"></div>
-      <div style="font-size:.85rem;font-weight:700;margin-bottom:.6rem;color:var(--text-muted)">馬メモ・印</div>
-      <div class="memo-horse-list">
-        ${raceHorses.filter(h => h.kettonum).map(h => {
-          const kt       = h.kettonum;
-          const flagOpts = _FLAG_OPTS.map(f =>
-            `<option value="${f.v}"${h.memo_flag === f.v ? ' selected' : ''}>${f.label}</option>`
-          ).join('');
-          const badge = h.memo_flag
-            ? `<span class="memo-badge memo-${h.memo_flag}">${flagIcon(h.memo_flag)}</span>` : '';
-          const memoEsc = (h.memo_text || '').replace(/"/g, '&quot;');
-          return `<div class="memo-row" id="memo-row-${kt}">
-            <span class="memo-horse-num">${h.umaban}番</span>
-            <span class="memo-horse-name" id="memo-name-${kt}">${h.bamei}${badge}</span>
-            <select class="memo-flag-sel" id="memo-flag-${kt}">${flagOpts}</select>
-            <input class="memo-text-input" id="memo-text-${kt}" type="text"
-                   value="${memoEsc}" placeholder="メモを入力...">
-            <button class="btn btn-ghost btn-sm"
-                    onclick="saveMemo('${kt}','${h.bamei}',event)">保存</button>
-          </div>`;
-        }).join('')}
-      </div>` : ''}
+      ${buildMemoSection(raceHorses)}
     </div>`;
 }
 
@@ -1033,6 +1011,40 @@ function onHorseSelect(raceId) {
   const nameEl = document.getElementById(`d-name-${raceId}`);
   if (numEl)  numEl.value  = horse.umaban;
   if (nameEl) nameEl.value = horse.bamei;
+}
+
+function buildMemoSection(raceHorses) {
+  const horses = raceHorses.filter(h => h.kettonum);
+  if (!horses.length) return '';
+
+  const FLAGS = [
+    { v: '',     label: 'なし' },
+    { v: '注目', label: '◎注目' },
+    { v: '次走', label: '△次走' },
+    { v: '危険', label: '×危険' },
+    { v: '消し', label: '✓消し' },
+  ];
+
+  const rows = horses.map(h => {
+    const kt = h.kettonum;
+    const opts = FLAGS.map(f =>
+      '<option value="' + f.v + '"' + (h.memo_flag === f.v ? ' selected' : '') + '>' + f.label + '</option>'
+    ).join('');
+    const badge = h.memo_flag
+      ? '<span class="memo-badge memo-' + h.memo_flag + '">' + flagIcon(h.memo_flag) + '</span>' : '';
+    const memoEsc = (h.memo_text || '').replace(/"/g, '&quot;');
+    return '<div class="memo-row" id="memo-row-' + kt + '">' +
+      '<span class="memo-horse-num">' + h.umaban + '番</span>' +
+      '<span class="memo-horse-name" id="memo-name-' + kt + '">' + h.bamei + badge + '</span>' +
+      '<select class="memo-flag-sel" id="memo-flag-' + kt + '">' + opts + '</select>' +
+      '<input class="memo-text-input" id="memo-text-' + kt + '" type="text" value="' + memoEsc + '" placeholder="メモを入力...">' +
+      '<button class="btn btn-ghost btn-sm" onclick="saveMemo(\'' + kt + '\',\'' + h.bamei + '\',event)">保存</button>' +
+      '</div>';
+  }).join('');
+
+  return '<div class="divider"></div>' +
+    '<div style="font-size:.85rem;font-weight:700;margin-bottom:.6rem;color:var(--text-muted)">馬メモ・印</div>' +
+    '<div class="memo-horse-list">' + rows + '</div>';
 }
 
 async function saveMemo(kettonum, bamei, evt) {
