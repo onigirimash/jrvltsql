@@ -18,7 +18,7 @@ from review_app.models import (
     WEATHER_OPTIONS,
     WIND_DIRECTIONS,
 )
-from review_app.routers import kaishi, race
+from review_app.routers import kaishi, memo, race
 
 BASE_DIR = Path(__file__).parent
 
@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 async def lifespan(app: FastAPI):
     with get_conn() as conn:
         cur = conn.cursor()
-        for migration in ["001_create_review_tables.sql", "002_create_nl_weather.sql", "003_add_pace_fields.sql"]:
+        for migration in ["001_create_review_tables.sql", "002_create_nl_weather.sql", "003_add_pace_fields.sql", "004_create_nl_review_memo.sql"]:
             sql = (BASE_DIR / "migrations" / migration).read_text(encoding="utf-8")
             cur.execute(sql)
     yield
@@ -46,7 +46,8 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 app.include_router(kaishi.router, prefix="/api")
-app.include_router(race.router, prefix="/api")
+app.include_router(race.router,   prefix="/api")
+app.include_router(memo.router,   prefix="/api")
 
 
 @app.get("/", response_class=HTMLResponse)

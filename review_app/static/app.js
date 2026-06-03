@@ -894,8 +894,20 @@ async function toggleRacePanel(raceNum, raceId) {
   renderKaishi();
 }
 
-// _raceHorsesCache: { raceId: [{umaban, bamei}, ...] } — renderKaishi が毎回セットする
+// _raceHorsesCache: { raceId: [{umaban, bamei, kettonum, memo_flag, memo_text}, ...] }
 let _raceHorsesCache = {};
+
+// 印アイコン変換
+const _FLAG_ICONS = { '注目': '◎', '次走': '△', '危険': '×', '消し': '✓' };
+function flagIcon(flag) { return _FLAG_ICONS[flag] || flag; }
+
+const _FLAG_OPTS = [
+  { v: '',    label: '—' },
+  { v: '注目', label: '◎注目' },
+  { v: '次走', label: '△次走' },
+  { v: '危険', label: '×危険' },
+  { v: '消し', label: '✓消し' },
+];
 
 function buildRacePanel(r, raceHorses = []) {
   // 馬データをキャッシュに保存（saveDisadvantage など非同期処理から参照できるように）
@@ -983,6 +995,29 @@ function buildRacePanel(r, raceHorses = []) {
       </div>
       <button class="btn btn-accent btn-sm" style="margin-top:.75rem"
               onclick="saveDisadvantage(${r.id}, event)">追加</button>
+      ${raceHorses.some(h => h.kettonum) ? `
+      <div class="divider"></div>
+      <div style="font-size:.85rem;font-weight:700;margin-bottom:.6rem;color:var(--text-muted)">馬メモ・印</div>
+      <div class="memo-horse-list">
+        ${raceHorses.filter(h => h.kettonum).map(h => {
+          const kt       = h.kettonum;
+          const flagOpts = _FLAG_OPTS.map(f =>
+            `<option value="${f.v}"${h.memo_flag === f.v ? ' selected' : ''}>${f.label}</option>`
+          ).join('');
+          const badge = h.memo_flag
+            ? `<span class="memo-badge memo-${h.memo_flag}">${flagIcon(h.memo_flag)}</span>` : '';
+          const memoEsc = (h.memo_text || '').replace(/"/g, '&quot;');
+          return `<div class="memo-row" id="memo-row-${kt}">
+            <span class="memo-horse-num">${h.umaban}番</span>
+            <span class="memo-horse-name" id="memo-name-${kt}">${h.bamei}${badge}</span>
+            <select class="memo-flag-sel" id="memo-flag-${kt}">${flagOpts}</select>
+            <input class="memo-text-input" id="memo-text-${kt}" type="text"
+                   value="${memoEsc}" placeholder="メモを入力...">
+            <button class="btn btn-ghost btn-sm"
+                    onclick="saveMemo('${kt}','${h.bamei}',event)">保存</button>
+          </div>`;
+        }).join('')}
+      </div>` : ''}
     </div>`;
 }
 
@@ -998,6 +1033,29 @@ function onHorseSelect(raceId) {
   const nameEl = document.getElementById(`d-name-${raceId}`);
   if (numEl)  numEl.value  = horse.umaban;
   if (nameEl) nameEl.value = horse.bamei;
+}
+
+async function saveMemo(kettonum, bamei, evt) {
+  evt.preventDefault();
+  const flag = document.getElementById(`memo-flag-${kettonum}`)?.value || null;
+  const memo = document.getElementById(`memo-text-${kettonum}`)?.value || null;
+  try {
+    await api.put(`/api/memo/${kettonum}`, { memo: memo || null, flag: flag || null });
+    // バッジを即時更新
+    const nameEl = document.getElementById(`memo-name-${kettonum}`);
+    if (nameEl) {
+      const badge = flag
+        ? `<span class="memo-badge memo-${flag}">${flagIcon(flag)}</span>` : '';
+      nameEl.innerHTML = `${bamei}${badge}`;
+    }
+    // キャッシュも更新
+    for (const horses of Object.values(_raceHorsesCache)) {
+      const h = horses.find(h => h.kettonum === kettonum);
+      if (h) { h.memo_flag = flag || null; h.memo_text = memo || null; }
+    }
+  } catch (e) {
+    alert('保存に失敗しました: ' + (e.message || e));
+  }
 }
 
 function severityDots(s) {

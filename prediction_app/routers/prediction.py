@@ -137,7 +137,9 @@ def get_prediction(
                 ROUND(rp.place_ev::numeric, 3)             AS place_ev,
                 ra.kyori,
                 LEFT(COALESCE(ra.trackcd, ''), 1)          AS surface_cd,
-                COALESCE(TRIM(ra.ryakusyo6), '')           AS race_name
+                COALESCE(TRIM(ra.ryakusyo6), '')           AS race_name,
+                m.flag                                     AS memo_flag,
+                m.memo                                     AS memo_text
             FROM nl_race_prediction rp
             LEFT JOIN nl_se se
                 ON  se.year     = rp.year
@@ -150,6 +152,8 @@ def get_prediction(
                 AND ra.monthday = rp.monthday
                 AND ra.jyocd    = rp.jyocd
                 AND ra.racenum  = rp.racenum
+            LEFT JOIN nl_review_memo m
+                ON  TRIM(m.kettonum) = TRIM(rp.kettonum)
             WHERE rp.year     = %s
               AND rp.monthday = %s
               AND rp.jyocd    = %s
@@ -207,6 +211,8 @@ def get_prediction(
             "place_odds_max":  float(r["place_odds_max"])  if r["place_odds_max"]  is not None else None,
             "place_ev":        float(r["place_ev"])        if r["place_ev"]        is not None else None,
             "avg_corner_pos":  corner_map.get((r.get("kettonum") or "").strip()),
+            "memo_flag":       r.get("memo_flag"),
+            "memo_text":       r.get("memo_text"),
         }
         for r in rows
     ]

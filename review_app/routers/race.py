@@ -141,10 +141,14 @@ def get_race_horses(race_id: int):
 
         try:
             cur.execute("""
-                SELECT umaban, wakuban, bamei
-                FROM   nl_se
-                WHERE  year = %s AND monthday = %s AND jyocd = %s AND racenum = %s
-                ORDER  BY umaban
+                SELECT se.umaban, se.wakuban, TRIM(se.bamei)    AS bamei,
+                       TRIM(se.kettonum)                         AS kettonum,
+                       m.flag                                    AS memo_flag,
+                       m.memo                                    AS memo_text
+                FROM   nl_se se
+                LEFT JOIN nl_review_memo m ON TRIM(m.kettonum) = TRIM(se.kettonum)
+                WHERE  se.year = %s AND se.monthday = %s AND se.jyocd = %s AND se.racenum = %s
+                ORDER  BY se.umaban
             """, (year, monthday, jyo_cd, race_num))
             rows = to_dicts(cur)
         except Exception:
@@ -152,9 +156,12 @@ def get_race_horses(race_id: int):
 
     return [
         {
-            'umaban':  r['umaban'],
-            'wakuban': r.get('wakuban'),
-            'bamei':   r.get('bamei') or '',
+            'umaban':    r['umaban'],
+            'wakuban':   r.get('wakuban'),
+            'bamei':     r.get('bamei') or '',
+            'kettonum':  (r.get('kettonum') or '').strip(),
+            'memo_flag': r.get('memo_flag'),
+            'memo_text': r.get('memo_text'),
         }
         for r in rows
     ]

@@ -369,9 +369,15 @@ function renderTable() {
     const rankCell  = rank != null
       ? `<span class="rank-badge rank-${Math.min(rank, 5)}">${rank}位</span>`
       : '―';
+    const _flagIcons = { '注目':'◎', '次走':'△', '危険':'×', '消し':'✓' };
+    const memoBadge = h.memo_flag
+      ? `<span class="memo-badge memo-${h.memo_flag}"
+              title="${(h.memo_text||'').replace(/"/g,'&quot;')}"
+              onclick="showMemoPopup(event,'${h.bamei.replace(/'/g,"\\'")}','${(h.memo_text||'').replace(/'/g,"\\'").replace(/\n/g,'\\n')}')"
+         >${_flagIcons[h.memo_flag]||h.memo_flag}</span>` : '';
     const nameCell  = h.kettonum
-      ? `<span class="horse-link" data-kettonum="${h.kettonum}" data-bamei="${h.bamei}">${h.bamei}</span>`
-      : h.bamei;
+      ? `<span class="horse-link" data-kettonum="${h.kettonum}" data-bamei="${h.bamei}">${h.bamei}</span>${memoBadge}`
+      : `${h.bamei}${memoBadge}`;
 
     return `<tr class="${recClass}">
       <td><span class="umaban">${h.umaban}</span></td>
@@ -593,6 +599,17 @@ async function showHorseHistory(kettonum, bamei) {
 function closeModal() {
   modal.style.display = 'none';
   document.body.style.overflow = '';
+}
+
+function showMemoPopup(evt, bamei, memoText) {
+  evt.stopPropagation();
+  const text = (memoText || '').replace(/\\n/g, '\n');
+  modalTitle.textContent = `回顧メモ: ${bamei}`;
+  modalBody.innerHTML = text
+    ? `<p style="white-space:pre-wrap;line-height:1.7">${text.replace(/</g,'&lt;')}</p>`
+    : '<p style="color:#999">メモはありません。</p>';
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
 }
 
 // ── Event listeners ────────────────────────────────────

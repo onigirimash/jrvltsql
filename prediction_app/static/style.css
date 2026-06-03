@@ -1,5 +1,19 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── 回顧メモ印バッジ ── */
+.memo-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.4em; height: 1.4em; padding: 0 .2em;
+  border-radius: 3px; font-size: .72rem; font-weight: 700;
+  cursor: pointer; vertical-align: middle; margin-left: 4px;
+  transition: opacity .15s;
+}
+.memo-badge:hover { opacity: .75; }
+.memo-注目 { background: #d1fae5; color: #065f46; border: 1px solid #059669; }
+.memo-次走 { background: #dbeafe; color: #1e40af; border: 1px solid #3b82f6; }
+.memo-危険 { background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; }
+.memo-消し { background: #f3f4f6; color: #6b7280; border: 1px solid #9ca3af; }
+
 /* ── 馬場状態バッジ ── */
 .baba-badge {
   display: inline-block;
