@@ -107,63 +107,35 @@ for ($i = 1; $i -le 25; $i++) {
 if (-not $ready[$portRev])  { Write-Host "  [WARN] review_app health check timed out -- continuing"    -ForegroundColor Yellow }
 if (-not $ready[$portPred]) { Write-Host "  [WARN] prediction_app health check timed out -- continuing" -ForegroundColor Yellow }
 
-# --- [3/4] Build self-contained ngrok config and start tunnels ---------------
-# Free plan supports up to 3 simultaneous tunnels.
-# Using a single temp config (authtoken + both tunnels) avoids the
-# "tunnel undefined" error that occurs when merging two config files.
-Write-Host "[3/4] Creating ngrok tunnels ..." -ForegroundColor Yellow
+# --- [3/4] Start ngrok tunnel for review_app only ----------------------------
+# Free plan allows only 1 address per tunnel (ERR_NGROK_3200 if 2 ports share 1 URL).
+# Expose review_app (port 8000) publicly; prediction_app (port 8001) stays local.
+Write-Host "[3/4] Starting ngrok tunnel for review_app (port $portRev) ..." -ForegroundColor Yellow
 
-# Extract authtoken and config version from the existing ngrok.yml
-$ngrokCfgRaw = [System.IO.File]::ReadAllText($ngrokCfg, [System.Text.UTF8Encoding]::new($false))
-if ($ngrokCfgRaw -notmatch '(?m)authtoken:\s*(\S+)') {
-    Write-Host "[ERROR] Could not read authtoken from $ngrokCfg" -ForegroundColor Red
-    exit 1
-}
-$authToken     = $Matches[1]
-$isV3          = $ngrokCfgRaw -match '(?m)version:\s*"?3"?'
+$ngrokProc = Start-Process "ngrok" -ArgumentList @("http", "$portRev") -PassThru -WindowStyle Minimized
 
-# Write a single complete config: authtoken + both tunnel definitions
-$ngrokTmpCfg = "$env:TEMP\ngrok_keiba_tunnels.yml"
-if ($isV3) {
-    $tunnelYaml = "version: `"3`"`nagent:`n  authtoken: $authToken`ntunnels:`n  review:`n    proto: http`n    addr: $portRev`n  prediction:`n    proto: http`n    addr: $portPred`n"
-} else {
-    $tunnelYaml = "authtoken: $authToken`ntunnels:`n  review:`n    proto: http`n    addr: $portRev`n  prediction:`n    proto: http`n    addr: $portPred`n"
-}
-$utf8NoBom = New-Object System.Text.UTF8Encoding $false
-[System.IO.File]::WriteAllText($ngrokTmpCfg, $tunnelYaml, $utf8NoBom)
-
-$ngrokArgs = @("start", "--all", "--config", $ngrokTmpCfg)
-$ngrokProc = Start-Process "ngrok" -ArgumentList $ngrokArgs -PassThru -WindowStyle Minimized
-
-# --- Poll ngrok local API for tunnel URLs ------------------------------------
-$urlRev  = $null
-$urlPred = $null
+# --- Poll ngrok local API for tunnel URL -------------------------------------
+$urlRev = $null
 for ($i = 1; $i -le 25; $i++) {
     Start-Sleep 1
     try {
         $tunnels = Invoke-RestMethod "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
-        foreach ($t in $tunnels.tunnels) {
-            if ($t.proto -ne "https") { continue }
-            # addr can be "8000", "localhost:8000", or "127.0.0.1:8000"
-            if ($t.config.addr -match "(^|:)$portRev`$")  { $urlRev  = $t.public_url }
-            if ($t.config.addr -match "(^|:)$portPred`$") { $urlPred = $t.public_url }
-        }
-        if ($urlRev -and $urlPred) { break }
+        $https   = $tunnels.tunnels | Where-Object { $_.proto -eq "https" } | Select-Object -First 1
+        if ($https) { $urlRev = $https.public_url; break }
     } catch { }
 }
 
-# --- [4/4] Display public URLs -----------------------------------------------
+# --- [4/4] Display public URL ------------------------------------------------
 Write-Host ""
-Write-Host "[4/4] Tunnels ready" -ForegroundColor Green
+Write-Host "[4/4] Tunnel ready" -ForegroundColor Green
 Write-Host ""
 Write-Host "  +------------------------------------------------------------+" -ForegroundColor Cyan
-Write-Host "  |  review_app  (port $portRev):                                  |" -ForegroundColor Cyan
-$u1 = if ($urlRev)  { $urlRev  } else { "FAILED -- check http://127.0.0.1:4040" }
+Write-Host "  |  review_app  (public via ngrok):                          |" -ForegroundColor Cyan
+$u1 = if ($urlRev) { $urlRev } else { "FAILED -- check http://127.0.0.1:4040" }
 Write-Host "  |    $u1" -ForegroundColor Green
 Write-Host "  |                                                            |" -ForegroundColor Cyan
-Write-Host "  |  prediction_app  (port $portPred):                             |" -ForegroundColor Cyan
-$u2 = if ($urlPred) { $urlPred } else { "FAILED -- check http://127.0.0.1:4040" }
-Write-Host "  |    $u2" -ForegroundColor Green
+Write-Host "  |  prediction_app  (local only):                            |" -ForegroundColor Cyan
+Write-Host "  |    http://127.0.0.1:$portPred                                   |" -ForegroundColor Gray
 Write-Host "  +------------------------------------------------------------+" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  ngrok dashboard (QR code): http://127.0.0.1:4040" -ForegroundColor Gray
@@ -196,7 +168,6 @@ try {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         }
     }
-    if (Test-Path $ngrokTmpCfg) { Remove-Item $ngrokTmpCfg -ErrorAction SilentlyContinue }
     Write-Host "Done." -ForegroundColor Green
     Write-Host ""
 }
