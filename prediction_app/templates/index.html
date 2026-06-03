@@ -73,6 +73,7 @@
     <table>
       <thead>
         <tr>
+          <th class="col-flag no-sort"></th>
           <th class="col-num no-sort">馬番</th>
           <th class="col-name no-sort">馬名 <span style="font-size:.68rem;opacity:.7">（クリックで履歴）</span></th>
           <th class="col-run no-sort">脚質</th>
@@ -344,7 +345,7 @@ function updateSortHeaders() {
 // ── Render main table ──────────────────────────────────
 function renderTable() {
   if (!_cHorses.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="empty">データがありません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="empty">データがありません</td></tr>';
     return;
   }
 
@@ -378,8 +379,15 @@ function renderTable() {
     const nameCell  = h.kettonum
       ? `<span class="horse-link" data-kettonum="${h.kettonum}" data-bamei="${h.bamei}">${h.bamei}</span>${memoBadge}`
       : `${h.bamei}${memoBadge}`;
+    const flagMark = h.memo_flag
+      ? `<span class="flag-mark flag-mark-${h.memo_flag}"
+              title="${(h.memo_text||'').replace(/"/g,'&quot;')}"
+              onclick="showMemoPopup(event,'${h.bamei.replace(/'/g,"\\'")}','${(h.memo_text||'').replace(/'/g,"\\'").replace(/\n/g,'\\n')}')"
+         >${_flagIcons[h.memo_flag]||h.memo_flag}</span>`
+      : '';
 
     return `<tr class="${recClass}">
+      <td class="col-flag">${flagMark}</td>
       <td><span class="umaban">${h.umaban}</span></td>
       <td class="col-name">${nameCell}</td>
       <td>${fmtRunningStyle(h.avg_corner_pos)}</td>

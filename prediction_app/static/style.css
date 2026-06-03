@@ -1,6 +1,6 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* ── 回顧メモ印バッジ ── */
+/* ── 回顧メモ印バッジ（馬名横の小バッジ） ── */
 .memo-badge {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 1.4em; height: 1.4em; padding: 0 .2em;
@@ -13,6 +13,29 @@
 .memo-次走 { background: #dbeafe; color: #1e40af; border: 1px solid #3b82f6; }
 .memo-危険 { background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; }
 .memo-消し { background: #f3f4f6; color: #6b7280; border: 1px solid #9ca3af; }
+
+/* ── 印マーク列（馬番左の大きい円形バッジ） ── */
+thead th.col-flag { width: 28px; padding: 0 2px; }
+tbody td.col-flag { padding: 0 2px; }
+
+.flag-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: .8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity .15s;
+  flex-shrink: 0;
+}
+.flag-mark:hover { opacity: .75; }
+.flag-mark-注目 { background: #059669; color: #fff; }
+.flag-mark-次走 { background: #2563eb; color: #fff; }
+.flag-mark-危険 { background: #dc2626; color: #fff; }
+.flag-mark-消し { background: #9ca3af; color: #fff; }
 
 /* ── 馬場状態バッジ ── */
 .baba-badge {
@@ -399,13 +422,13 @@ thead th.col-place-ev   { width: 78px; }
   /* テーブル: 常時表示8列（44+100+40+80+80+88+44+72 = 548px） */
   table { min-width: 540px; }
 
-  /* PC専用列を非表示（列順: 1馬番 2馬名 3脚質 4勝率 5複勝率 6調整EV 7推奨
-                              8実力指数[表示] 9単勝O 10複勝O 11期待値 12複勝EV 13順位） */
-  thead th.col-odds,       tbody td:nth-child(9),
-  thead th.col-place-odds, tbody td:nth-child(10),
-  thead th.col-ev,         tbody td:nth-child(11),
-  thead th.col-place-ev,   tbody td:nth-child(12),
-  thead th.col-rank,       tbody td:nth-child(13) { display: none; }
+  /* PC専用列を非表示（列順: 1印 2馬番 3馬名 4脚質 5勝率 6複勝率 7調整EV 8推奨
+                              9実力指数[表示] 10単勝O 11複勝O 12期待値 13複勝EV 14順位） */
+  thead th.col-odds,       tbody td:nth-child(10),
+  thead th.col-place-odds, tbody td:nth-child(11),
+  thead th.col-ev,         tbody td:nth-child(12),
+  thead th.col-place-ev,   tbody td:nth-child(13),
+  thead th.col-rank,       tbody td:nth-child(14) { display: none; }
 
   /* 確率バーは非表示（数値だけ表示） */
   .prob-bar-bg { display: none; }
