@@ -107,19 +107,32 @@ for ($i = 1; $i -le 25; $i++) {
 if (-not $ready[$portRev])  { Write-Host "  [WARN] review_app health check timed out -- continuing"    -ForegroundColor Yellow }
 if (-not $ready[$portPred]) { Write-Host "  [WARN] prediction_app health check timed out -- continuing" -ForegroundColor Yellow }
 
-# --- [3/4] Create ngrok multi-tunnel config ----------------------------------
+# --- [3/4] Build self-contained ngrok config and start tunnels ---------------
+# Free plan supports up to 3 simultaneous tunnels.
+# Using a single temp config (authtoken + both tunnels) avoids the
+# "tunnel undefined" error that occurs when merging two config files.
 Write-Host "[3/4] Creating ngrok tunnels ..." -ForegroundColor Yellow
 
+# Extract authtoken and config version from the existing ngrok.yml
+$ngrokCfgRaw = [System.IO.File]::ReadAllText($ngrokCfg, [System.Text.UTF8Encoding]::new($false))
+if ($ngrokCfgRaw -notmatch '(?m)authtoken:\s*(\S+)') {
+    Write-Host "[ERROR] Could not read authtoken from $ngrokCfg" -ForegroundColor Red
+    exit 1
+}
+$authToken     = $Matches[1]
+$isV3          = $ngrokCfgRaw -match '(?m)version:\s*"?3"?'
+
+# Write a single complete config: authtoken + both tunnel definitions
 $ngrokTmpCfg = "$env:TEMP\ngrok_keiba_tunnels.yml"
-$tunnelYaml  = "tunnels:`n  review:`n    proto: http`n    addr: $portRev`n  prediction:`n    proto: http`n    addr: $portPred`n"
-$utf8NoBom   = New-Object System.Text.UTF8Encoding $false
+if ($isV3) {
+    $tunnelYaml = "version: `"3`"`nagent:`n  authtoken: $authToken`ntunnels:`n  review:`n    proto: http`n    addr: $portRev`n  prediction:`n    proto: http`n    addr: $portPred`n"
+} else {
+    $tunnelYaml = "authtoken: $authToken`ntunnels:`n  review:`n    proto: http`n    addr: $portRev`n  prediction:`n    proto: http`n    addr: $portPred`n"
+}
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($ngrokTmpCfg, $tunnelYaml, $utf8NoBom)
 
-$ngrokArgs = @(
-    "start", "review", "prediction",
-    "--config", $ngrokCfg,
-    "--config", $ngrokTmpCfg
-)
+$ngrokArgs = @("start", "--all", "--config", $ngrokTmpCfg)
 $ngrokProc = Start-Process "ngrok" -ArgumentList $ngrokArgs -PassThru -WindowStyle Minimized
 
 # --- Poll ngrok local API for tunnel URLs ------------------------------------
@@ -131,8 +144,9 @@ for ($i = 1; $i -le 25; $i++) {
         $tunnels = Invoke-RestMethod "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
         foreach ($t in $tunnels.tunnels) {
             if ($t.proto -ne "https") { continue }
-            if ($t.config.addr -match ":$portRev`$")  { $urlRev  = $t.public_url }
-            if ($t.config.addr -match ":$portPred`$") { $urlPred = $t.public_url }
+            # addr can be "8000", "localhost:8000", or "127.0.0.1:8000"
+            if ($t.config.addr -match "(^|:)$portRev`$")  { $urlRev  = $t.public_url }
+            if ($t.config.addr -match "(^|:)$portPred`$") { $urlPred = $t.public_url }
         }
         if ($urlRev -and $urlPred) { break }
     } catch { }
@@ -143,11 +157,11 @@ Write-Host ""
 Write-Host "[4/4] Tunnels ready" -ForegroundColor Green
 Write-Host ""
 Write-Host "  +------------------------------------------------------------+" -ForegroundColor Cyan
-Write-Host "  |  review_app:                                               |" -ForegroundColor Cyan
+Write-Host "  |  review_app  (port $portRev):                                  |" -ForegroundColor Cyan
 $u1 = if ($urlRev)  { $urlRev  } else { "FAILED -- check http://127.0.0.1:4040" }
 Write-Host "  |    $u1" -ForegroundColor Green
 Write-Host "  |                                                            |" -ForegroundColor Cyan
-Write-Host "  |  prediction_app:                                          |" -ForegroundColor Cyan
+Write-Host "  |  prediction_app  (port $portPred):                             |" -ForegroundColor Cyan
 $u2 = if ($urlPred) { $urlPred } else { "FAILED -- check http://127.0.0.1:4040" }
 Write-Host "  |    $u2" -ForegroundColor Green
 Write-Host "  +------------------------------------------------------------+" -ForegroundColor Cyan
