@@ -59,6 +59,19 @@ _SYUBETUCD_MAP: dict[str, str] = {
     '11': '新馬', '12': '未勝利',
     '13': '1勝', '14': '2勝', '15': '3勝',
 }
+# nl_se.class_code → 表示ラベル
+_CLASS_LABEL: dict[str, str] = {
+    '15':  '新馬',
+    '7':   '未勝利',
+    '23':  '1勝',
+    '43':  '2勝',
+    '67':  '3勝',
+    '115': 'L',
+    '131': 'OP',
+    '163': 'G3',
+    '179': 'G2',
+    '195': 'G1',
+}
 # AMeDAS 16方位コード → 8方位
 _WIND_DIR_MAP: dict[int, str] = {
     0: '無風',
@@ -589,7 +602,8 @@ def get_pace_stats(kaishi_id: int):
                     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY se.time) AS median_time,
                     tr.race_pci  AS target_pci,
                     tr.agari3f   AS target_agari3f,
-                    tr.mae3f     AS target_mae3f
+                    tr.mae3f     AS target_mae3f,
+                    MAX(se.class_code) AS class_code
                 FROM nl_ra ra
                 LEFT JOIN nl_se se
                     ON  se.year     = ra.year
@@ -666,12 +680,19 @@ def get_pace_stats(kaishi_id: int):
                 else:
                     pace_judge = 'ミドルペース'
 
-            avg_pci = _get_course_avg_pci(cur, jyo_cd, int(kyori), trackcd[:1], year)
+            class_code  = str(r.get('class_code') or '').strip() or None
+            class_label = _CLASS_LABEL.get(class_code, '') if class_code else ''
+
+            avg_pci = _get_course_avg_pci(
+                cur, jyo_cd, int(kyori), trackcd[:1], year, class_code
+            )
 
             results.append({
                 'race_num':      r['racenum'],
                 'distance':      kyori,
                 'track_cd':      trackcd,
+                'class_code':    class_code,
+                'class_label':   class_label,
                 'median_time':   round(median_time, 2) if median_time else None,
                 'last_3f':       round(agari3f, 2) if agari3f > 0 else None,
                 'front_half_3f': front_half_3f,
@@ -684,31 +705,55 @@ def get_pace_stats(kaishi_id: int):
         return results
 
 
-def _get_course_avg_pci(cur, jyo_cd: str, kyori: int, track_prefix: str, cur_year: int) -> dict | None:
-    """過去5年の同コース平均PCIを返す (nl_target_race.race_pci ベース)。"""
+def _get_course_avg_pci(
+    cur, jyo_cd: str, kyori: int, track_prefix: str,
+    cur_year: int, class_code: str | None = None,
+) -> dict | None:
+    """過去5年の同コース同クラス平均PCIを返す (nl_target_race.race_pci ベース)。
+
+    class_code が指定された場合は nl_se.class_code で絞り込む。
+    """
     if kyori <= 600:
         return None
     _surface_map = {'1': 'T', '2': 'D', '5': 'J'}
     surface = _surface_map.get(track_prefix)
     if not surface:
         return None
+
+    # class_code フィルタ: EXISTS で nl_se と突き合わせ
+    class_filter = ""
+    params: list = [
+        jyo_cd, kyori, surface,
+        f"{cur_year - 5}0101",
+        f"{cur_year - 1}1231",
+    ]
+    if class_code:
+        class_filter = """
+          AND EXISTS (
+              SELECT 1 FROM nl_se se
+              WHERE se.year      = CAST(LEFT(tr.race_date, 4) AS int)
+                AND se.monthday  = CAST(RIGHT(tr.race_date, 4) AS int)
+                AND se.jyocd     = tr.jyo_cd
+                AND se.racenum   = tr.racenum
+                AND se.class_code = %s
+              LIMIT 1
+          )"""
+        params.append(class_code)
+
     try:
-        cur.execute("""
+        cur.execute(f"""
             SELECT
                 ROUND(AVG(race_pci)::numeric, 1) AS avg_pci,
                 COUNT(*)                          AS sample_count
-            FROM nl_target_race
-            WHERE jyo_cd  = %s
-              AND distance = %s
-              AND surface  = %s
-              AND race_pci > 0
+            FROM nl_target_race tr
+            WHERE jyo_cd   = %s
+              AND distance  = %s
+              AND surface   = %s
+              AND race_pci  > 0
               AND race_date >= %s
               AND race_date <= %s
-        """, (
-            jyo_cd, kyori, surface,
-            f"{cur_year - 5}0101",
-            f"{cur_year - 1}1231",
-        ))
+              {class_filter}
+        """, params)
         row = cur.fetchone()
     except Exception:
         return None

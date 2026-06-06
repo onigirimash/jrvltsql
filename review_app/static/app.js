@@ -718,10 +718,12 @@ function buildPaceStatsSection(paceStats) {
       ? `${p.avg_pci.toFixed(1)}<span class="pace-avg">&thinsp;(n=${p.sample_count})</span>`
       : '<span class="pace-avg">—</span>';
     const judgeBadge = paceBadge(p.pace_judge);
+    const classLabel = p.class_label || '—';
     return `
       <tr>
         <td>${p.race_num}R</td>
         <td>${p.distance ? p.distance + 'm' : '—'}${tname ? `<span class="pace-avg">&thinsp;${tname}</span>` : ''}</td>
+        <td>${classLabel}</td>
         <td>${medianFmt}</td>
         <td>${frontFmt}</td>
         <td>${lastFmt}</td>
@@ -736,13 +738,13 @@ function buildPaceStatsSection(paceStats) {
       <div class="card-title">ペース判定（PCI方式）</div>
       <table class="disadv-table pace-table">
         <thead><tr>
-          <th>R</th><th>距離</th><th>走破中央値</th><th>前半Ave-3F</th><th>上がり3F</th><th>PCI</th><th>同コース平均PCI</th><th>判定</th>
+          <th>R</th><th>距離</th><th>クラス</th><th>走破中央値</th><th>通過3F</th><th>上がり3F</th><th>PCI</th><th>同クラス平均PCI</th><th>判定</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <div style="font-size:.75rem;color:var(--text-muted);margin-top:.5rem">
-        前半Ave-3F = (走破タイム − 上がり3F) × 600 ÷ (距離 − 600)　／　PCI = 上がり3F ÷ (前半Ave-3F + 上がり3F) × 100<br>
-        PCI &lt; 47: ハイペース（赤）　47〜53: ミドルペース（灰）　PCI &gt; 53: スローペース（青）　同コース = 過去5年
+        通過3F = 前半600mタイム（TARGETデータ）　／　PCI = 上がり3F ÷ (通過3F + 上がり3F) × 100（TARGET算出値）<br>
+        PCI &lt; 47: ハイペース（赤）　47〜53: ミドルペース（灰）　PCI &gt; 53: スローペース（青）　同クラス = 過去5年
       </div>
     </div>`;
 }
