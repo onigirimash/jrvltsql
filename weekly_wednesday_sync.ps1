@@ -117,6 +117,31 @@ function Invoke-Step {
     else          { Write-Log "=== $Label COMPLETE ===" }
 }
 
+# Helper: run py script with --date-from / --date-to (range steps)
+# Used for review-based corrections that may be entered retrospectively.
+function Invoke-StepRange {
+    param([string]$Label, [string]$Script, [string]$DateFrom, [string]$DateTo)
+    Write-Log "=== $Label START (${DateFrom} - ${DateTo}) ==="
+    if (-not (Test-Path $Script)) { Write-Log "${Label}: $Script not found - skip" "WARN"; return }
+    $pyArgs = @($Script,
+        "--date-from", $DateFrom,
+        "--date-to",   $DateTo,
+        "--pg-host",     $env:POSTGRES_HOST,
+        "--pg-port",     ([string]$env:POSTGRES_PORT),
+        "--pg-database", $env:POSTGRES_DATABASE,
+        "--pg-user",     $env:POSTGRES_USER,
+        "--pg-password", $pgPassword)
+    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    & py "-3.12-32" @pyArgs 2>&1 | ForEach-Object {
+        $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Label, $_
+        Write-Host $line
+        [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+    }
+    $ec = $LASTEXITCODE; $ErrorActionPreference = $prev
+    if ($ec -eq 0) { Write-Log "=== $Label COMPLETE ===" }
+    else           { Write-Log "=== $Label FAILED (exit: $ec) ===" "WARN" }
+}
+
 # Helper: run py script with no date arg (whole-dataset steps)
 function Invoke-StepAll {
     param([string]$Label, [string]$Script, [string[]]$ExtraArgs = @())
@@ -220,11 +245,18 @@ if (Test-Path $haronSql) {
 # ── Index pipeline (last weekend) ─────────────────────────────────────────────
 Invoke-Step    "TIME_DEV"    (Join-Path $root "scripts\calc_time_deviation.py")    $raceDates
 Invoke-Step    "FUTAN_DEV"   (Join-Path $root "scripts\calc_futan_correction.py")  $raceDates
-Invoke-Step    "DISADV_DEV"  (Join-Path $root "scripts\calc_disadv_correction.py") $raceDates
 Invoke-Step    "PACE_DEV"    (Join-Path $root "scripts\calc_pace_correction.py")   $raceDates
-Invoke-Step    "BIAS_DEV"    (Join-Path $root "scripts\calc_bias_correction.py")   $raceDates
 Invoke-Step    "TRACK_SPEED" (Join-Path $root "scripts\calc_track_speed.py")       $raceDates
 Invoke-Step    "PERF_IDX"    (Join-Path $root "scripts\calc_performance_index.py") $raceDates
+
+# ── Review-based corrections: 4-week window (captures retrospective entries) ───
+# review_disadvantage / review_track_bias は後から入力されることがあるため
+# 直近4週間を毎週再処理して取りこぼしを防ぐ
+$reviewFrom = $today.AddDays(-28).ToString("yyyyMMdd")
+$reviewTo   = $lastSun.ToString("yyyyMMdd")
+Write-Log "Review correction window: $reviewFrom - $reviewTo"
+Invoke-StepRange "DISADV_DEV" (Join-Path $root "scripts\calc_disadv_correction.py") $reviewFrom $reviewTo
+Invoke-StepRange "BIAS_DEV"   (Join-Path $root "scripts\calc_bias_correction.py")   $reviewFrom $reviewTo
 
 # ── Index pipeline (all data) ─────────────────────────────────────────────────
 Invoke-StepAll "HORSE_IDX"   (Join-Path $root "scripts\calc_horse_index.py")
