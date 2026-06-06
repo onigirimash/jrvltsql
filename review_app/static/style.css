@@ -487,6 +487,29 @@ hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
 .pace-slow { background: #dbeafe; color: #1e40af; }
 .pace-avg  { font-size: .72rem; color: var(--text-muted); margin-left: .2rem; }
 .pace-table td:nth-child(3) { font-size: .85rem; }
+.time-diff-fast { color: #0369a1; font-weight: 600; }
+.time-diff-slow { color: #b45309; font-weight: 600; }
+
+/* ── 当日馬場サマリーバー ── */
+.surface-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: .55rem .5rem .4rem;
+  margin-top: .5rem;
+  border-top: 1px solid var(--border);
+  font-size: .84rem;
+  flex-wrap: wrap;
+}
+.surface-summary-label {
+  font-size: .72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-right: .25rem;
+}
+.surface-summary-item { display: inline-flex; align-items: center; gap: .2rem; }
 
 /* ── Wind Assessment Badge ───────────────────────────── */
 .wind-badge {

@@ -201,9 +201,12 @@ async function renderKaishi() {
   const k = await api.get(`/api/kaishi/${state.kaishiId}`);
 
   // バイアスタブのときだけペース統計を取得
-  let paceStats = [];
+  let paceStats = { races: [], surface_summary: {} };
   if (state.tab === 'bias') {
-    try { paceStats = await api.get(`/api/kaishi/${state.kaishiId}/pace-stats`); } catch {}
+    try {
+      const raw = await api.get(`/api/kaishi/${state.kaishiId}/pace-stats`);
+      paceStats = Array.isArray(raw) ? { races: raw, surface_summary: {} } : raw;
+    } catch {}
   }
 
   // レースタブでパネルが開いているとき出走馬を取得
@@ -641,8 +644,10 @@ function buildBiasTab(k, paceStats = []) {
   const distOpts = ['', ...C.distance_categories].map(d =>
     `<option value="${d}">${d || '全距離共通'}</option>`).join('');
 
-  const paceSection = paceStats.length
-    ? buildPaceStatsSection(paceStats)
+  const paceRaces = paceStats.races || [];
+  const paceSummary = paceStats.surface_summary || {};
+  const paceSection = paceRaces.length
+    ? buildPaceStatsSection(paceRaces, paceSummary)
     : '<div class="card" style="margin-bottom:.75rem"><div class="card-title">ペース判定</div><div class="empty">ラップタイムデータがDBに未登録です</div></div>';
 
   return buildWindSummary(k) + paceSection + C.track_types.map(tt => {
@@ -707,16 +712,24 @@ function buildBiasTab(k, paceStats = []) {
 // ============================================================
 const _TRACK_PREFIX_NAME = { '1': '芝', '2': 'ダ', '5': '障' };
 
-function buildPaceStatsSection(paceStats) {
+function buildPaceStatsSection(paceStats, surfaceSummary = {}) {
   const rows = paceStats.map(p => {
     const tname = _TRACK_PREFIX_NAME[String(p.track_cd || '').slice(0, 1)] || '';
-    const medianFmt = p.median_time != null ? p.median_time.toFixed(1) : '—';
-    const frontFmt  = p.front_half_3f != null ? p.front_half_3f.toFixed(1) : '—';
-    const lastFmt   = p.last_3f != null ? p.last_3f.toFixed(1) : '—';
-    const pciFmt    = p.pci != null ? p.pci.toFixed(1) : '—';
-    const avgPciFmt = p.avg_pci != null
+    const medianFmt  = p.median_time   != null ? p.median_time.toFixed(1)   : '—';
+    const frontFmt   = p.front_half_3f != null ? p.front_half_3f.toFixed(1) : '—';
+    const lastFmt    = p.last_3f       != null ? p.last_3f.toFixed(1)       : '—';
+    const pciFmt     = p.pci           != null ? p.pci.toFixed(1)           : '—';
+    const avgPciFmt  = p.avg_pci != null
       ? `${p.avg_pci.toFixed(1)}<span class="pace-avg">&thinsp;(n=${p.sample_count})</span>`
       : '<span class="pace-avg">—</span>';
+    const winFmt     = p.win_time  != null ? p.win_time.toFixed(1)  : '—';
+    const baseFmt    = p.base_time != null ? p.base_time.toFixed(1) : '—';
+    let   diffFmt    = '—';
+    if (p.time_diff != null) {
+      const sign = p.time_diff >= 0 ? '+' : '';
+      const cls  = p.time_diff < 0 ? 'time-diff-fast' : p.time_diff > 0 ? 'time-diff-slow' : '';
+      diffFmt = `<span class="${cls}">${sign}${p.time_diff.toFixed(1)}</span>`;
+    }
     const judgeBadge = paceBadge(p.pace_judge);
     const classLabel = p.class_label || '—';
     return `
@@ -729,24 +742,45 @@ function buildPaceStatsSection(paceStats) {
         <td>${lastFmt}</td>
         <td>${pciFmt}</td>
         <td>${avgPciFmt}</td>
+        <td>${winFmt}</td>
+        <td>${baseFmt}</td>
+        <td>${diffFmt}</td>
         <td>${judgeBadge}</td>
       </tr>`;
   }).join('');
+
+  const summaryHtml = buildSurfaceSummary(surfaceSummary);
 
   return `
     <div class="card" style="margin-bottom:.75rem">
       <div class="card-title">ペース判定（PCI方式）</div>
       <table class="disadv-table pace-table">
         <thead><tr>
-          <th>R</th><th>距離</th><th>クラス</th><th>走破中央値</th><th>通過3F</th><th>上がり3F</th><th>PCI</th><th>同クラス平均PCI</th><th>判定</th>
+          <th>R</th><th>距離</th><th>クラス</th><th>走破中央値</th><th>通過3F</th><th>上がり3F</th><th>PCI</th><th>同クラス平均PCI</th><th>勝ちタイム</th><th>基準タイム</th><th>タイム差</th><th>判定</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
+      ${summaryHtml}
       <div style="font-size:.75rem;color:var(--text-muted);margin-top:.5rem">
-        通過3F = 前半600mタイム（TARGETデータ）　／　PCI = 上がり3F ÷ (通過3F + 上がり3F) × 100（TARGET算出値）<br>
-        PCI &lt; 47: ハイペース（赤）　47〜53: ミドルペース（灰）　PCI &gt; 53: スローペース（青）　同クラス = 過去5年
+        通過3F = 前半600mタイム（TARGET）　／　PCI = 上がり3F ÷ (通過3F + 上がり3F) × 100（TARGET算出値）<br>
+        PCI &lt; 47: ハイペース（赤）　47〜53: ミドル（灰）　PCI &gt; 53: スロー（青）　基準タイム = 過去5年同クラス勝ちタイム中央値
       </div>
     </div>`;
+}
+
+function buildSurfaceSummary(summary) {
+  if (!summary || Object.keys(summary).length === 0) return '';
+  const items = ['芝', 'ダート'].filter(s => summary[s]).map(s => {
+    const d    = summary[s];
+    const sign = d.avg_diff >= 0 ? '+' : '';
+    const cls  = d.avg_diff < -0.3 ? 'time-diff-fast' : d.avg_diff > 0.3 ? 'time-diff-slow' : '';
+    return `<span class="surface-summary-item">
+      <strong>${s}</strong>：<span class="${cls}">${sign}${d.avg_diff.toFixed(1)}秒</span>
+      <span class="pace-avg">${d.label}</span><span class="pace-avg">&thinsp;(n=${d.n})</span>
+    </span>`;
+  }).join('');
+  if (!items) return '';
+  return `<div class="surface-summary-bar"><span class="surface-summary-label">当日馬場サマリー</span>${items}</div>`;
 }
 
 function paceBadge(judge) {

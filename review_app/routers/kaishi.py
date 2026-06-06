@@ -603,6 +603,7 @@ def get_pace_stats(kaishi_id: int):
                     tr.race_pci  AS target_pci,
                     tr.agari3f   AS target_agari3f,
                     tr.mae3f     AS target_mae3f,
+                    tr.win_time  AS win_time,
                     MAX(se.class_code) AS class_code
                 FROM nl_ra ra
                 LEFT JOIN nl_se se
@@ -619,7 +620,7 @@ def get_pace_stats(kaishi_id: int):
                     AND tr.racenum   = ra.racenum
                 WHERE ra.year = %s AND ra.monthday = %s AND ra.jyocd = %s
                 GROUP BY ra.racenum, ra.kyori, ra.trackcd, ra.haron3l,
-                         tr.race_pci, tr.agari3f, tr.mae3f
+                         tr.race_pci, tr.agari3f, tr.mae3f, tr.win_time
                 ORDER BY ra.racenum
             """, (year, monthday, jyo_cd))
             races = to_dicts(cur)
@@ -683,9 +684,19 @@ def get_pace_stats(kaishi_id: int):
             class_code  = str(r.get('class_code') or '').strip() or None
             class_label = _CLASS_LABEL.get(class_code, '') if class_code else ''
 
-            avg_pci = _get_course_avg_pci(
+            avg_pci  = _get_course_avg_pci(
                 cur, jyo_cd, int(kyori), trackcd[:1], year, class_code
             )
+            base_rec = _get_base_time(
+                cur, jyo_cd, int(kyori), trackcd[:1], year, class_code
+            )
+
+            win_time_raw = r.get('win_time')
+            win_time  = round(float(win_time_raw), 1) if win_time_raw else None
+            base_time = base_rec['base_time'] if base_rec else None
+            time_diff: float | None = None
+            if win_time is not None and base_time is not None:
+                time_diff = round(win_time - base_time, 1)
 
             results.append({
                 'race_num':      r['racenum'],
@@ -700,9 +711,40 @@ def get_pace_stats(kaishi_id: int):
                 'pace_judge':    pace_judge,
                 'avg_pci':       avg_pci['avg_pci']      if avg_pci else None,
                 'sample_count':  avg_pci['sample_count'] if avg_pci else 0,
+                'win_time':      win_time,
+                'base_time':     base_time,
+                'time_diff':     time_diff,
             })
 
-        return results
+        # 当日馬場サマリー（芝・ダート別タイム差平均）
+        _surf_name = {'1': '芝', '2': 'ダート'}
+        _surf_buckets: dict[str, list[float]] = {}
+        for rec in results:
+            prefix = str(rec.get('track_cd') or '')[:1]
+            sname  = _surf_name.get(prefix)
+            if sname and rec.get('time_diff') is not None:
+                _surf_buckets.setdefault(sname, []).append(rec['time_diff'])
+
+        surface_summary: dict = {}
+        for sname, diffs in _surf_buckets.items():
+            avg_d = sum(diffs) / len(diffs)
+            if avg_d <= -0.8:
+                label = '高速馬場'
+            elif avg_d <= -0.3:
+                label = 'やや速め'
+            elif avg_d < 0.3:
+                label = '標準'
+            elif avg_d < 0.8:
+                label = 'やや重め'
+            else:
+                label = '重め'
+            surface_summary[sname] = {
+                'avg_diff': round(avg_d, 1),
+                'label':    label,
+                'n':        len(diffs),
+            }
+
+        return {'races': results, 'surface_summary': surface_summary}
 
 
 def _get_course_avg_pci(
@@ -725,7 +767,7 @@ def _get_course_avg_pci(
     params: list = [
         jyo_cd, kyori, surface,
         f"{cur_year - 5}0101",
-        f"{cur_year - 1}1231",
+        f"{cur_year}1231",   # 当年含む
     ]
     if class_code:
         class_filter = """
@@ -770,6 +812,73 @@ def _get_course_avg_pci(
         return None
     return {
         'avg_pci':      float(avg_pci),
+        'sample_count': int(n),
+    }
+
+
+def _get_base_time(
+    cur, jyo_cd: str, kyori: int, track_prefix: str,
+    cur_year: int, class_code: str | None = None,
+) -> dict | None:
+    """過去5年（当年含む）の同コース同クラス勝ちタイム中央値を返す。
+    当年データのみの場合もサンプルが存在すれば基準値として使用する。
+    """
+    if kyori <= 600:
+        return None
+    _surface_map = {'1': 'T', '2': 'D', '5': 'J'}
+    surface = _surface_map.get(track_prefix)
+    if not surface:
+        return None
+
+    class_filter = ""
+    params: list = [
+        jyo_cd, kyori, surface,
+        f"{cur_year - 5}0101",
+        f"{cur_year}1231",   # 当年含む（過去データ未インポート時もサンプルを確保）
+    ]
+    if class_code:
+        class_filter = """
+          AND EXISTS (
+              SELECT 1 FROM nl_se se
+              WHERE se.year      = CAST(LEFT(tr.race_date, 4) AS int)
+                AND se.monthday  = CAST(RIGHT(tr.race_date, 4) AS int)
+                AND se.jyocd     = tr.jyo_cd
+                AND se.racenum   = tr.racenum
+                AND se.class_code = %s
+              LIMIT 1
+          )"""
+        params.append(class_code)
+
+    try:
+        cur.execute(f"""
+            SELECT
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY win_time) AS base_time,
+                COUNT(*) AS sample_count
+            FROM nl_target_race tr
+            WHERE jyo_cd   = %s
+              AND distance  = %s
+              AND surface   = %s
+              AND win_time  > 0
+              AND race_date >= %s
+              AND race_date <= %s
+              {class_filter}
+        """, params)
+        row = cur.fetchone()
+    except Exception:
+        return None
+
+    if not row:
+        return None
+    if isinstance(row, dict):
+        base_time = row.get('base_time')
+        n         = row.get('sample_count') or 0
+    else:
+        base_time, n = row[0], row[1]
+
+    if not base_time or int(n) == 0:
+        return None
+    return {
+        'base_time':    round(float(base_time), 1),
         'sample_count': int(n),
     }
 
