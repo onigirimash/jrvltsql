@@ -544,18 +544,24 @@ def fetch_nl_races(kaishi_id: int):
     return [_map_nl_race(r) for r in rows]
 
 
+def _min100_to_secs(t: float) -> float:
+    """nl_se.time の min×100+sec 形式（例: 145.9）を秒（例: 105.9）に変換する。"""
+    m = int(t / 100)
+    return m * 60 + (t - m * 100)
+
+
 @router.get("/{kaishi_id}/pace-stats")
 def get_pace_stats(kaishi_id: int):
     """PCI ベースのペース判定を返す。
 
-    計算式:
-      前半Ave-3F = (走破タイム中央値 - 上がり3F) × 600 ÷ (距離 - 600)
-      PCI        = 上がり3F ÷ (前半Ave-3F + 上がり3F) × 100
+    データソース（優先順位）:
+      前半Ave-3F : nl_target_race.mae3f   (通過3F = 前半600mタイム、直接使用)
+      上がり3F   : nl_target_race.agari3f → nl_ra.haron3l
+      PCI        : nl_target_race.race_pci (TARGET独自算法。PCI3≒race_pci)
 
-    データソース:
-      走破タイム  : nl_se.time の中央値（全出走馬）
-      上がり3F    : nl_ra.haron3l
-      距離        : nl_ra.kyori
+    フォールバック（TARGET未取得時のみ）:
+      前半Ave-3F = (走破タイム中央値[秒] - 上がり3F) × 600 ÷ (距離 - 600)
+      PCI        = 上がり3F ÷ (通過3F + 上がり3F) × 100
     """
     with get_conn() as conn:
         cur = conn.cursor()
@@ -574,14 +580,16 @@ def get_pace_stats(kaishi_id: int):
         monthday = race_date.month * 100 + race_date.day
 
         try:
-            # nl_se.time の中央値を nl_ra と結合して取得
             cur.execute("""
                 SELECT
                     ra.racenum,
                     ra.kyori,
                     ra.trackcd,
                     ra.haron3l,
-                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY se.time) AS median_time
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY se.time) AS median_time,
+                    tr.race_pci  AS target_pci,
+                    tr.agari3f   AS target_agari3f,
+                    tr.mae3f     AS target_mae3f
                 FROM nl_ra ra
                 LEFT JOIN nl_se se
                     ON  se.year     = ra.year
@@ -591,8 +599,13 @@ def get_pace_stats(kaishi_id: int):
                     AND se.nichiji  = ra.nichiji
                     AND se.racenum  = ra.racenum
                     AND se.time     > 0
+                LEFT JOIN nl_target_race tr
+                    ON  tr.race_date = ra.year::text || LPAD(ra.monthday::text, 4, '0')
+                    AND tr.jyo_cd    = ra.jyocd
+                    AND tr.racenum   = ra.racenum
                 WHERE ra.year = %s AND ra.monthday = %s AND ra.jyocd = %s
-                GROUP BY ra.racenum, ra.kyori, ra.trackcd, ra.haron3l
+                GROUP BY ra.racenum, ra.kyori, ra.trackcd, ra.haron3l,
+                         tr.race_pci, tr.agari3f, tr.mae3f
                 ORDER BY ra.racenum
             """, (year, monthday, jyo_cd))
             races = to_dicts(cur)
@@ -601,107 +614,118 @@ def get_pace_stats(kaishi_id: int):
 
         results = []
         for r in races:
-            kyori       = r.get('kyori') or 0
-            trackcd     = str(r.get('trackcd') or '').strip()
-            haron3l     = float(r.get('haron3l') or 0)
-            median_time = float(r.get('median_time') or 0) if r.get('median_time') else None
+            kyori   = r.get('kyori') or 0
+            trackcd = str(r.get('trackcd') or '').strip()
 
             if not kyori or int(kyori) <= 600:
                 continue
+
+            # 上がり3F: nl_target_race.agari3f を優先、なければ nl_ra.haron3l
+            target_agari3f = float(r.get('target_agari3f') or 0)
+            haron3l        = float(r.get('haron3l') or 0)
+            agari3f        = target_agari3f if target_agari3f > 0 else haron3l
+
+            # 前半Ave-3F: TARGET mae3f (通過3F=前半600mタイム) を直接使用
+            target_mae3f = float(r.get('target_mae3f') or 0)
+
+            # 走破タイム中央値: フォールバック用（TARGET未取得時のみ使用）
+            raw_median = r.get('median_time')
+            median_time: float | None = None
+            if raw_median:
+                median_time = _min100_to_secs(float(raw_median))
+
+            target_pci = float(r.get('target_pci') or 0) if r.get('target_pci') else None
 
             front_half_3f: float | None = None
             pci:           float | None = None
             pace_judge:    str | None   = None
 
-            if median_time and haron3l > 0:
-                # 前半Ave-3F = (走破タイム - 上がり3F) × 600 ÷ (距離 - 600)
+            if target_mae3f > 0:
+                # TARGET mae3f = 通過3F = 前半600mタイム（直接使用、計算不要）
+                front_half_3f = round(target_mae3f, 1)
+            elif median_time and agari3f > 0 and int(kyori) > 600:
+                # フォールバック: 走破タイム中央値から推計（精度低）
                 front_half_3f = round(
-                    (median_time - haron3l) * 600 / (int(kyori) - 600), 2
+                    (median_time - agari3f) * 600 / (int(kyori) - 600), 1
                 )
-                # PCI = 上がり3F ÷ (前半Ave-3F + 上がり3F) × 100
-                denom = front_half_3f + haron3l
+
+            # PCI: TARGET race_pci を直接使用（TARGET独自算法で計算済み）
+            # フォールバック: 通過3F + 上がり3F から計算
+            if target_pci and target_pci > 0:
+                pci = round(target_pci, 1)
+            elif front_half_3f is not None and agari3f > 0:
+                denom = front_half_3f + agari3f
                 if denom > 0:
-                    pci = round(haron3l / denom * 100, 1)
-                    if pci < 47:
-                        pace_judge = 'ハイペース'
-                    elif pci > 53:
-                        pace_judge = 'スローペース'
-                    else:
-                        pace_judge = 'ミドルペース'
+                    pci = round(agari3f / denom * 100, 1)
+
+            if pci is not None:
+                if pci < 47:
+                    pace_judge = 'ハイペース'
+                elif pci > 53:
+                    pace_judge = 'スローペース'
+                else:
+                    pace_judge = 'ミドルペース'
 
             avg_pci = _get_course_avg_pci(cur, jyo_cd, int(kyori), trackcd[:1], year)
 
             results.append({
-                'race_num':     r['racenum'],
-                'distance':     kyori,
-                'track_cd':     trackcd,
-                'median_time':  round(median_time, 2) if median_time else None,
-                'last_3f':      round(haron3l, 2) if haron3l > 0 else None,
+                'race_num':      r['racenum'],
+                'distance':      kyori,
+                'track_cd':      trackcd,
+                'median_time':   round(median_time, 2) if median_time else None,
+                'last_3f':       round(agari3f, 2) if agari3f > 0 else None,
                 'front_half_3f': front_half_3f,
-                'pci':          pci,
-                'pace_judge':   pace_judge,
-                'avg_pci':      avg_pci['avg_pci']      if avg_pci else None,
-                'sample_count': avg_pci['sample_count'] if avg_pci else 0,
+                'pci':           pci,
+                'pace_judge':    pace_judge,
+                'avg_pci':       avg_pci['avg_pci']      if avg_pci else None,
+                'sample_count':  avg_pci['sample_count'] if avg_pci else 0,
             })
 
         return results
 
 
 def _get_course_avg_pci(cur, jyo_cd: str, kyori: int, track_prefix: str, cur_year: int) -> dict | None:
-    """過去5年の同コース平均PCI を返す。
-
-    同じ計算式（nl_se.time 中央値 + nl_ra.haron3l）で各レースの PCI を求め、
-    その平均を返す。
-    """
+    """過去5年の同コース平均PCIを返す (nl_target_race.race_pci ベース)。"""
     if kyori <= 600:
+        return None
+    _surface_map = {'1': 'T', '2': 'D', '5': 'J'}
+    surface = _surface_map.get(track_prefix)
+    if not surface:
         return None
     try:
         cur.execute("""
             SELECT
-                ra.haron3l,
-                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY se.time) AS median_time
-            FROM nl_ra ra
-            JOIN nl_se se
-                ON  se.year     = ra.year
-                AND se.monthday = ra.monthday
-                AND se.jyocd    = ra.jyocd
-                AND se.kaiji    = ra.kaiji
-                AND se.nichiji  = ra.nichiji
-                AND se.racenum  = ra.racenum
-                AND se.time     > 0
-            WHERE ra.jyocd         = %s
-              AND ra.kyori         = %s
-              AND LEFT(ra.trackcd, 1) = %s
-              AND ra.year BETWEEN %s AND %s
-              AND ra.haron3l       > 0
-            GROUP BY ra.year, ra.monthday, ra.racenum, ra.haron3l
-            LIMIT 500
-        """, (jyo_cd, kyori, track_prefix, cur_year - 5, cur_year - 1))
-        rows = cur.fetchall()
+                ROUND(AVG(race_pci)::numeric, 1) AS avg_pci,
+                COUNT(*)                          AS sample_count
+            FROM nl_target_race
+            WHERE jyo_cd  = %s
+              AND distance = %s
+              AND surface  = %s
+              AND race_pci > 0
+              AND race_date >= %s
+              AND race_date <= %s
+        """, (
+            jyo_cd, kyori, surface,
+            f"{cur_year - 5}0101",
+            f"{cur_year - 1}1231",
+        ))
+        row = cur.fetchone()
     except Exception:
         return None
 
-    pcis: list[float] = []
-    for row in rows:
-        if isinstance(row, dict):
-            h3l  = float(row.get('haron3l') or 0)
-            mtime = float(row.get('median_time') or 0)
-        else:
-            h3l, mtime = float(row[0] or 0), float(row[1] or 0)
+    if not row:
+        return None
+    if isinstance(row, dict):
+        avg_pci = row.get('avg_pci')
+        n       = row.get('sample_count') or 0
+    else:
+        avg_pci, n = row[0], row[1]
 
-        if h3l <= 0 or mtime <= 0:
-            continue
-        front = (mtime - h3l) * 600 / (kyori - 600)
-        denom = front + h3l
-        if denom <= 0:
-            continue
-        pcis.append(h3l / denom * 100)
-
-    if not pcis:
+    if not avg_pci or int(n) == 0:
         return None
     return {
-        'avg_pci':      round(sum(pcis) / len(pcis), 1),
-        'sample_count': len(pcis),
+        'avg_pci':      float(avg_pci),
+        'sample_count': int(n),
     }
 
 

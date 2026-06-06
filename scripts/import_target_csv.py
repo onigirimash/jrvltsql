@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS nl_target_race (
   corner3  VARCHAR(100),
   corner4  VARCHAR(100),
   created_at  TIMESTAMP DEFAULT NOW(),
+  mae3f      NUMERIC(5,1),
+  win_time   NUMERIC(6,1),
+  avg_time   NUMERIC(6,1),
+  kijun_time NUMERIC(6,1),
   PRIMARY KEY (race_date, jyo_cd, racenum)
 )
 """
@@ -75,16 +79,22 @@ INSERT INTO nl_target_race (
   race_pci, agari3f,
   lap01, lap02, lap03, lap04, lap05, lap06, lap07,
   lap08, lap09, lap10, lap11, lap12, lap13, lap14, lap15,
-  corner1, corner2, corner3, corner4
+  corner1, corner2, corner3, corner4,
+  mae3f, win_time, avg_time, kijun_time
 ) VALUES (
   :race_date, :jyo_cd, :racenum,
   :surface, :distance, :baba_state,
   :race_pci, :agari3f,
   :lap01, :lap02, :lap03, :lap04, :lap05, :lap06, :lap07,
   :lap08, :lap09, :lap10, :lap11, :lap12, :lap13, :lap14, :lap15,
-  :corner1, :corner2, :corner3, :corner4
+  :corner1, :corner2, :corner3, :corner4,
+  :mae3f, :win_time, :avg_time, :kijun_time
 )
-ON CONFLICT (race_date, jyo_cd, racenum) DO NOTHING
+ON CONFLICT (race_date, jyo_cd, racenum) DO UPDATE SET
+  mae3f      = EXCLUDED.mae3f,
+  win_time   = EXCLUDED.win_time,
+  avg_time   = EXCLUDED.avg_time,
+  kijun_time = EXCLUDED.kijun_time
 """
 
 
@@ -137,11 +147,23 @@ def _parse_row(row: list[str]) -> dict | None:
     # 馬場状態
     baba_state = row[9].strip() or None
 
+    # 通過3F (col12, index11) — 前半600mタイム
+    mae3f = _to_num(row[11]) if len(row) > 11 else None
+
     # レースPCI (col27, index26)
     race_pci = _to_num(row[26]) if len(row) > 26 else None
 
     # 上り3F (col17, index16)
     agari3f = _to_num(row[16]) if len(row) > 16 else None
+
+    # 1着入線タイム (col21, index20)
+    win_time = _to_num(row[20]) if len(row) > 20 else None
+
+    # 全馬平均タイム (col22, index21)
+    avg_time = _to_num(row[21]) if len(row) > 21 else None
+
+    # 基準タイム (col28, index27)
+    kijun_time = _to_num(row[27]) if len(row) > 27 else None
 
     # Lap01〜Lap15 (col32〜46, index31〜45)
     laps = {}
@@ -170,6 +192,10 @@ def _parse_row(row: list[str]) -> dict | None:
         "corner2":    _corner(57),
         "corner3":    _corner(58),
         "corner4":    _corner(59),
+        "mae3f":      mae3f,
+        "win_time":   win_time,
+        "avg_time":   avg_time,
+        "kijun_time": kijun_time,
     }
 
 
