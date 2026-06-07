@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>競馬予想ツール</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ root_path }}/static/style.css">
 </head>
 <body>
 
@@ -117,6 +117,9 @@
 
 <script>
 'use strict';
+
+// Base URL for API calls (empty when served at root, '/predict' when sub-mounted)
+const BASE_URL = "{{ root_path }}";
 
 // ── State ──────────────────────────────────────────────
 let _horses         = [];   // raw API data
@@ -415,7 +418,7 @@ async function fetchAndFillBabaInfo() {
   statusEl.textContent = '取得中...';
 
   try {
-    const d = await apiFetch(`/api/baba_info?date=${date}&venue=${venue}`);
+    const d = await apiFetch(BASE_URL + `/api/baba_info?date=${date}&venue=${venue}`);
     const fmt  = v => (v !== null && v !== undefined) ? v : '−';
     const fmtB = (label, cd) => {
       if (!label) return '−';
@@ -466,7 +469,7 @@ function onBiasChange() {
 async function loadDates() {
   setStatus('日付を読み込み中...');
   try {
-    const dates = await apiFetch('/api/dates');
+    const dates = await apiFetch(BASE_URL + '/api/dates');
     selDate.innerHTML = '<option value="">日付を選択</option>' +
       dates.map(d => `<option value="${d.value}">${d.label}</option>`).join('');
     selDate.disabled = false;
@@ -480,7 +483,7 @@ async function loadVenues(date) {
   resetSelect(selVenue, '読み込み中...');
   resetSelect(selRace, 'Rを選択');
   try {
-    const venues = await apiFetch(`/api/venues?date=${date}`);
+    const venues = await apiFetch(BASE_URL + `/api/venues?date=${date}`);
     selVenue.innerHTML = '<option value="">競馬場を選択</option>' +
       venues.map(v => `<option value="${v.code}">${v.name}</option>`).join('');
     selVenue.disabled = venues.length === 0;
@@ -496,7 +499,7 @@ async function loadVenues(date) {
 async function loadRaces(date, venue) {
   resetSelect(selRace, '読み込み中...');
   try {
-    const races = await apiFetch(`/api/race_list?date=${date}&venue=${venue}`);
+    const races = await apiFetch(BASE_URL + `/api/race_list?date=${date}&venue=${venue}`);
     selRace.innerHTML = '<option value="">レースを選択</option>' +
       races.map(r => {
         const surf = r.surface || '';
@@ -522,7 +525,7 @@ async function loadPrediction(date, venue, race) {
   _horses = [];
 
   try {
-    const data = await apiFetch(`/api/prediction?date=${date}&venue=${venue}&race=${race}`);
+    const data = await apiFetch(BASE_URL + `/api/prediction?date=${date}&venue=${venue}&race=${race}`);
     const info = data.race_info;
 
     const namePart = info.race_name ? ` 【${info.race_name}】` : '';
@@ -562,7 +565,7 @@ async function showHorseHistory(kettonum, bamei) {
   document.body.style.overflow = 'hidden';
 
   try {
-    const data = await apiFetch(`/api/horse_history?kettonum=${encodeURIComponent(kettonum)}`);
+    const data = await apiFetch(BASE_URL + `/api/horse_history?kettonum=${encodeURIComponent(kettonum)}`);
     if (!data.races.length) {
       modalBody.innerHTML = '<p class="loading">過去レースデータがありません。</p>';
       return;

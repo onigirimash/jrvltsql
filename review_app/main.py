@@ -18,6 +18,7 @@ from review_app.models import (
     WEATHER_OPTIONS,
     WIND_DIRECTIONS,
 )
+from prediction_app.main import app as prediction_app
 from review_app.routers import kaishi, memo, race
 
 BASE_DIR = Path(__file__).parent
@@ -48,6 +49,8 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 app.include_router(kaishi.router, prefix="/api")
 app.include_router(race.router,   prefix="/api")
 app.include_router(memo.router,   prefix="/api")
+
+app.mount("/predict", prediction_app)
 
 
 @app.get("/", response_class=HTMLResponse)

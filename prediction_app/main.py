@@ -27,4 +27,8 @@ app.include_router(prediction.router)
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"root_path": request.scope.get("root_path", "")},
+    )

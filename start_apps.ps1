@@ -107,64 +107,37 @@ for ($i = 1; $i -le 25; $i++) {
 if (-not $ready[$portRev])  { Write-Host "  [WARN] review_app health check timed out -- continuing"    -ForegroundColor Yellow }
 if (-not $ready[$portPred]) { Write-Host "  [WARN] prediction_app health check timed out -- continuing" -ForegroundColor Yellow }
 
-# --- [3/4] Start ngrok tunnels (2 separate processes) ------------------------
-# Each ngrok process exposes one port.
-# Process 1 uses local API port 4040, process 2 uses 4041 (auto-assigned).
-Write-Host "[3/4] Starting ngrok tunnels ..." -ForegroundColor Yellow
+# --- [3/4] Start ngrok tunnel for review_app (port 8000 only) ----------------
+# prediction_app is served via review_app's /predict mount -- 1 URL covers both.
+Write-Host "[3/4] Starting ngrok tunnel for port $portRev ..." -ForegroundColor Yellow
 
-# -- Tunnel 1: review_app (8000) -> API at 4040
-$ngrokRevProc = Start-Process "ngrok" -ArgumentList @("http", "$portRev") -PassThru -WindowStyle Minimized
+$ngrokProc = Start-Process "ngrok" -ArgumentList @("http", "$portRev") -PassThru -WindowStyle Minimized
 
 $urlRev = $null
 for ($i = 1; $i -le 25; $i++) {
     Start-Sleep 1
     try {
-        $t = Invoke-RestMethod "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
-        $h = $t.tunnels | Where-Object { $_.proto -eq "https" } | Select-Object -First 1
-        if ($h) { $urlRev = $h.public_url; break }
+        $tunnels = Invoke-RestMethod "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
+        $https   = $tunnels.tunnels | Where-Object { $_.proto -eq "https" } | Select-Object -First 1
+        if ($https) { $urlRev = $https.public_url; break }
     } catch { }
-}
-
-if ($urlRev) {
-    Write-Host "  review_app tunnel ready: $urlRev" -ForegroundColor Green
-} else {
-    Write-Host "  [WARN] review_app tunnel URL not found -- check http://127.0.0.1:4040" -ForegroundColor Yellow
-}
-
-# -- Tunnel 2: prediction_app (8001) -> API at 4041
-$ngrokPredProc = Start-Process "ngrok" -ArgumentList @("http", "$portPred") -PassThru -WindowStyle Minimized
-
-$urlPred = $null
-for ($i = 1; $i -le 25; $i++) {
-    Start-Sleep 1
-    try {
-        $t = Invoke-RestMethod "http://127.0.0.1:4041/api/tunnels" -ErrorAction Stop
-        $h = $t.tunnels | Where-Object { $_.proto -eq "https" } | Select-Object -First 1
-        if ($h) { $urlPred = $h.public_url; break }
-    } catch { }
-}
-
-if ($urlPred) {
-    Write-Host "  prediction_app tunnel ready: $urlPred" -ForegroundColor Green
-} else {
-    Write-Host "  [WARN] prediction_app tunnel URL not found -- check http://127.0.0.1:4041" -ForegroundColor Yellow
 }
 
 # --- [4/4] Display public URLs -----------------------------------------------
 Write-Host ""
-Write-Host "[4/4] Tunnels ready" -ForegroundColor Green
+Write-Host "[4/4] Tunnel ready" -ForegroundColor Green
 Write-Host ""
+$u1 = if ($urlRev) { $urlRev } else { "FAILED -- check http://127.0.0.1:4040" }
 Write-Host "  +------------------------------------------------------------+" -ForegroundColor Cyan
-Write-Host "  |  review_app  (port $portRev):                                  |" -ForegroundColor Cyan
-$u1 = if ($urlRev)  { $urlRev  } else { "FAILED -- check http://127.0.0.1:4040" }
+Write-Host "  |  review_app:                                               |" -ForegroundColor Cyan
 Write-Host "  |    $u1" -ForegroundColor Green
 Write-Host "  |                                                            |" -ForegroundColor Cyan
-Write-Host "  |  prediction_app  (port $portPred):                             |" -ForegroundColor Cyan
-$u2 = if ($urlPred) { $urlPred } else { "FAILED -- check http://127.0.0.1:4041" }
+Write-Host "  |  prediction_app:                                          |" -ForegroundColor Cyan
+$u2 = if ($urlRev) { "$urlRev/predict" } else { "FAILED" }
 Write-Host "  |    $u2" -ForegroundColor Green
 Write-Host "  +------------------------------------------------------------+" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  ngrok dashboards: http://127.0.0.1:4040  /  http://127.0.0.1:4041" -ForegroundColor Gray
+Write-Host "  ngrok dashboard (QR code): http://127.0.0.1:4040" -ForegroundColor Gray
 Write-Host ""
 Write-Host "  Running -- press Ctrl+C to stop" -ForegroundColor Gray
 Write-Host ""
@@ -181,19 +154,15 @@ try {
             Write-Host "[WARN] prediction_app exited unexpectedly (code: $($predProc.ExitCode))" -ForegroundColor Yellow
             break
         }
-        if ($ngrokRevProc.HasExited) {
-            Write-Host "[WARN] ngrok (review_app) exited unexpectedly (code: $($ngrokRevProc.ExitCode))" -ForegroundColor Yellow
-            break
-        }
-        if ($ngrokPredProc.HasExited) {
-            Write-Host "[WARN] ngrok (prediction_app) exited unexpectedly (code: $($ngrokPredProc.ExitCode))" -ForegroundColor Yellow
+        if ($ngrokProc.HasExited) {
+            Write-Host "[WARN] ngrok exited unexpectedly (code: $($ngrokProc.ExitCode))" -ForegroundColor Yellow
             break
         }
     }
 } finally {
     Write-Host ""
     Write-Host "Shutting down ..." -ForegroundColor Yellow
-    foreach ($p in @($revProc, $predProc, $ngrokRevProc, $ngrokPredProc)) {
+    foreach ($p in @($revProc, $predProc, $ngrokProc)) {
         if ($p -and -not $p.HasExited) {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         }
