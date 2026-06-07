@@ -143,7 +143,7 @@ if ($ec -ne 0) { Write-Log "=== SYNC FAILED (exit: $ec) ===" "ERROR"; exit $ec }
 Write-Log "=== SYNC COMPLETE ==="
 
 # ── WIN_PROB ──────────────────────────────────────────────────────────────────
-Invoke-Step "WIN_PROB" (Join-Path $root "scripts\calc_win_prob.py")       $raceDates @("--max-debut", "99")
+Invoke-Step "WIN_PROB" (Join-Path $root "scripts\calc_win_prob.py")       $raceDates @("--max-debut", "999")
 
 # ── EV ────────────────────────────────────────────────────────────────────────
 Invoke-Step "EV"       (Join-Path $root "scripts\calc_expected_value.py") $raceDates
