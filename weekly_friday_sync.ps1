@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     JRA-VAN Weekly Friday Sync - Next Weekend Entries + Prediction
