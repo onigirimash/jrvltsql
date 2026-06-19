@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     JRA-VAN Weekly Wednesday Sync - Past Results + Index Pipeline
@@ -89,6 +89,133 @@ Write-Log "Race dates (last weekend): $($raceDates -join ', ')"
 Set-Location -Path $root
 $quickstart = Join-Path $root "scripts\quickstart.py"
 
+# ── JVLink stall-retry wrapper ────────────────────────────────────────────────
+# Runs quickstart.py and monitors stdout for stalls (no new output for $StallSec).
+# On stall: kills the process, restarts JVLinkAgent, retries up to $MaxRetry times.
+# Returns $true on success, $false on total failure.
+function Invoke-SyncWithRetry {
+    param(
+        [string[]]$PyArgs,
+        [int]$MaxRetry = 3,
+        [int]$StallSec = 60
+    )
+
+    $restartScript = Join-Path $root "scripts\restart_jvlink.ps1"
+    $totalAttempts = $MaxRetry + 1
+
+    for ($attempt = 1; $attempt -le $totalAttempts; $attempt++) {
+        Write-Log "=== SYNC attempt $attempt/$totalAttempts START ==="
+
+        $tmpOut = [System.IO.Path]::GetTempFileName()
+        $tmpErr = [System.IO.Path]::GetTempFileName()
+
+        $proc = Start-Process -FilePath "py" `
+            -ArgumentList (@("-3.12-32") + $PyArgs) `
+            -RedirectStandardOutput $tmpOut `
+            -RedirectStandardError  $tmpErr `
+            -PassThru -NoNewWindow
+
+        Start-Sleep -Milliseconds 500
+
+        $reader = [System.IO.StreamReader]::new(
+            [System.IO.File]::Open($tmpOut,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite),
+            [System.Text.Encoding]::UTF8
+        )
+
+        $stalled    = $false
+        $lastSize   = 0
+        $lastMoveAt = Get-Date
+
+        try {
+            while (-not $proc.HasExited) {
+                Start-Sleep -Seconds 5
+
+                # Stream new output lines to log
+                while ($true) {
+                    $ln = $reader.ReadLine()
+                    if ($null -eq $ln) { break }
+                    $ll = "[{0}] [SYNC] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $ln
+                    Write-Host $ll
+                    [System.IO.File]::AppendAllText($logFile, "$ll`n", $utf8NoBom)
+                }
+
+                # Stall check
+                $fi = Get-Item $tmpOut -ErrorAction SilentlyContinue
+                $curSize = if ($fi) { $fi.Length } else { 0 }
+                if ($curSize -gt $lastSize) {
+                    $lastSize   = $curSize
+                    $lastMoveAt = Get-Date
+                } elseif (((Get-Date) - $lastMoveAt).TotalSeconds -ge $StallSec) {
+                    Write-Log "SYNC: no output for ${StallSec}s - stall detected, killing process" "WARN"
+                    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                    $stalled = $true
+                    break
+                }
+            }
+
+            # Drain remaining stdout
+            while ($true) {
+                $ln = $reader.ReadLine()
+                if ($null -eq $ln) { break }
+                $ll = "[{0}] [SYNC] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $ln
+                Write-Host $ll
+                [System.IO.File]::AppendAllText($logFile, "$ll`n", $utf8NoBom)
+            }
+
+            # Drain stderr
+            if (Test-Path $tmpErr) {
+                foreach ($ln in (Get-Content $tmpErr -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+                    if ($ln) {
+                        $ll = "[{0}] [SYNC:ERR] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $ln
+                        Write-Host $ll
+                        [System.IO.File]::AppendAllText($logFile, "$ll`n", $utf8NoBom)
+                    }
+                }
+            }
+        } finally {
+            $reader.Dispose()
+            Remove-Item $tmpOut -Force -ErrorAction SilentlyContinue
+            Remove-Item $tmpErr -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($stalled) {
+            Write-Log "SYNC attempt $attempt/$totalAttempts stalled." "WARN"
+            if ($attempt -lt $totalAttempts) {
+                Write-Log "Restarting JVLinkAgent before retry (attempt $($attempt+1)/$totalAttempts)..."
+                if (Test-Path $restartScript) {
+                    $ok = & $restartScript
+                    if ($ok) {
+                        Write-Log "JVLinkAgent restarted. Waiting 10s..."
+                        Start-Sleep -Seconds 10
+                    } else {
+                        Write-Log "JVLinkAgent restart failed - will retry anyway." "WARN"
+                        Start-Sleep -Seconds 5
+                    }
+                } else {
+                    Write-Log "restart_jvlink.ps1 not found - skipping restart." "WARN"
+                }
+                continue
+            }
+            Write-Log "=== SYNC FAILED: stalled on all $totalAttempts attempts ===" "ERROR"
+            return $false
+        }
+
+        $proc.WaitForExit()
+        $ec = $proc.ExitCode
+        if ($ec -eq 0) {
+            Write-Log "=== SYNC attempt $attempt COMPLETE ==="
+            return $true
+        }
+        Write-Log "=== SYNC attempt $attempt FAILED (exit: $ec) ===" "ERROR"
+        return $false
+    }
+
+    return $false
+}
+
 # ── Helper: run py script per race date ───────────────────────────────────────
 function Invoke-Step {
     param([string]$Label, [string]$Script, [string[]]$Dates)
@@ -164,9 +291,9 @@ function Invoke-StepAll {
     else           { Write-Log "=== $Label FAILED (exit: $ec) ===" "WARN" }
 }
 
-# ── SYNC ──────────────────────────────────────────────────────────────────────
+# ── SYNC (with stall-retry) ───────────────────────────────────────────────────
 Write-Log "=== SYNC START ==="
-$pyArgs = @(
+$syncArgs = @(
     $quickstart,
     "--mode",        "update",
     "--no-toku",
@@ -182,15 +309,10 @@ $pyArgs = @(
     "--to-date",     $syncTo,
     "--yes"
 )
-$prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-& py "-3.12-32" @pyArgs 2>&1 | ForEach-Object {
-    $line = "[{0}] [SYNC] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $_
-    Write-Host $line
-    [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+if (-not (Invoke-SyncWithRetry -PyArgs $syncArgs)) {
+    Write-Log "=== Wednesday sync ABORTED: SYNC step failed ===" "ERROR"
+    exit 1
 }
-$ec = $LASTEXITCODE; $ErrorActionPreference = $prev
-if ($ec -ne 0) { Write-Log "=== SYNC FAILED (exit: $ec) ===" "ERROR"; exit $ec }
-Write-Log "=== SYNC COMPLETE ==="
 
 # ── 気象データ同期 ─────────────────────────────────────────────────────────────
 Write-Log "=== WEATHER START ==="
