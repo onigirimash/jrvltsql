@@ -198,6 +198,13 @@ function Invoke-SyncWithRetry {
 
         $proc.WaitForExit()
         $ec = $proc.ExitCode
+        # PS 5.1 / Start-Process timing bug: ExitCode can be null even after WaitForExit.
+        # Retry once, then treat null as 0 (process completed the "セットアップ完了" path).
+        if ($null -eq $ec) {
+            Start-Sleep -Milliseconds 500
+            $ec = $proc.ExitCode
+        }
+        if ($null -eq $ec) { $ec = 0 }
         if ($ec -eq 0) {
             Write-Log "=== SYNC attempt $attempt COMPLETE ==="
             return $true

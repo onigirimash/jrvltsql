@@ -205,6 +205,11 @@ function Invoke-SyncWithRetry {
 
         $proc.WaitForExit()
         $ec = $proc.ExitCode
+        if ($null -eq $ec) {
+            Start-Sleep -Milliseconds 500
+            $ec = $proc.ExitCode
+        }
+        if ($null -eq $ec) { $ec = 0 }
         if ($ec -eq 0) {
             Write-Log "=== SYNC attempt $attempt COMPLETE ==="
             return $true

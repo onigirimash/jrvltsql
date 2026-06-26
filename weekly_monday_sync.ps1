@@ -70,9 +70,10 @@ $targetTxtDir  = "C:\TFJV\TXT"
 $seisekiFile   = Join-Path $targetTxtDir "seiseki_$year.txt"
 $lapFile       = Join-Path $targetTxtDir "lap_$year.txt"
 
-$exportScript  = Join-Path $root "scripts\target_csv_export.py"
-$seisekiScript = Join-Path $root "scripts\import_target_seiseki.py"
-$lapScript     = Join-Path $root "scripts\import_target_csv.py"
+$registerScript = Join-Path $root "scripts\target_data_register.py"
+$exportScript   = Join-Path $root "scripts\target_csv_export.py"
+$seisekiScript  = Join-Path $root "scripts\import_target_seiseki.py"
+$lapScript      = Join-Path $root "scripts\import_target_csv.py"
 
 Write-Log "Year: $year"
 Write-Log "seiseki: $seisekiFile"
@@ -94,6 +95,12 @@ function Invoke-Logged {
     if ($ec -eq 0) { Write-Log "=== $Label COMPLETE ===" }
     else           { Write-Log "=== $Label FAILED (exit: $ec) ===" "ERROR"; exit $ec }
 }
+
+# ── Step 0: TARGET データ登録（JRA-VAN Data Lab からの取得）─────────────────
+Invoke-Logged "DATA_REGISTER" @(
+    $registerScript,
+    "--timeout", "600"
+)
 
 # ── Step 1: TARGET → seiseki CSV ──────────────────────────────────────────────
 Invoke-Logged "SEISEKI_EXPORT" @(

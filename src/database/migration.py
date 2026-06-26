@@ -97,9 +97,13 @@ def migrate_table_if_needed(db: BaseDatabase, table_name: str, schema_sql: str) 
         f"expected={sorted(expected_columns)}. "
         f"Dropping and recreating table."
     )
-    db.execute(f'DROP TABLE "{table_name}"')
-    db.execute(schema_sql)
-    db.commit()
+    try:
+        db.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+        db.execute(schema_sql)
+        db.commit()
+    except Exception as e:
+        logger.error(f"Failed to migrate table {table_name}: {e}. Skipping.")
+        return False
     return True
 
 
