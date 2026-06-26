@@ -86,6 +86,11 @@ $nextSun   = $nextSat.AddDays(1)
 $raceDates = @($nextSat.ToString("yyyyMMdd"), $nextSun.ToString("yyyyMMdd"))
 Write-Log "Race dates (next weekend): $($raceDates -join ', ')"
 
+# Index rebuild range: past 2 weeks → today (ensures Wednesday sync gaps are covered)
+$perfFrom = $today.AddDays(-14).ToString("yyyyMMdd")
+$perfTo   = $today.ToString("yyyyMMdd")
+Write-Log "Index rebuild range: $perfFrom - $perfTo"
+
 Set-Location -Path $root
 $quickstart = Join-Path $root "scripts\quickstart.py"
 
@@ -216,6 +221,28 @@ function Invoke-SyncWithRetry {
     return $false
 }
 
+# ── Helper: run a py script once (no date loop) ───────────────────────────────
+function Invoke-PyScript {
+    param([string]$Label, [string]$Script, [string[]]$ExtraArgs = @())
+    Write-Log "=== $Label START ==="
+    if (-not (Test-Path $Script)) { Write-Log "${Label}: $Script not found - skip" "WARN"; return }
+    $pyArgs = @($Script,
+        "--pg-host",     $env:POSTGRES_HOST,
+        "--pg-port",     ([string]$env:POSTGRES_PORT),
+        "--pg-database", $env:POSTGRES_DATABASE,
+        "--pg-user",     $env:POSTGRES_USER,
+        "--pg-password", $pgPassword) + $ExtraArgs
+    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    & py "-3.12-32" @pyArgs 2>&1 | ForEach-Object {
+        $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Label, $_
+        Write-Host $line
+        [System.IO.File]::AppendAllText($logFile, "$line`n", $utf8NoBom)
+    }
+    $ec = $LASTEXITCODE; $ErrorActionPreference = $prev
+    if ($ec -eq 0) { Write-Log "=== $Label COMPLETE ===" }
+    else            { Write-Log "=== $Label FAILED (exit: $ec) ===" "WARN" }
+}
+
 # ── Helper: run py script per race date ───────────────────────────────────────
 function Invoke-Step {
     param([string]$Label, [string]$Script, [string[]]$Dates, [string[]]$ExtraArgs = @())
@@ -263,6 +290,18 @@ if (-not (Invoke-SyncWithRetry -PyArgs $syncArgs)) {
     Write-Log "=== Friday sync ABORTED: SYNC step failed ===" "ERROR"
     exit 1
 }
+
+# ── PERF_INDEX (直近2週間分) ──────────────────────────────────────────────────
+Invoke-PyScript "PERF_INDEX" (Join-Path $root "scripts\calc_performance_index.py") @("--date-from", $perfFrom, "--date-to", $perfTo)
+
+# ── HORSE_INDEX ───────────────────────────────────────────────────────────────
+Invoke-PyScript "HORSE_INDEX" (Join-Path $root "scripts\calc_horse_index.py")
+
+# ── CURRENT_INDEX ─────────────────────────────────────────────────────────────
+Invoke-PyScript "CURRENT_INDEX" (Join-Path $root "scripts\calc_current_index.py")
+
+# ── RELIABILITY ───────────────────────────────────────────────────────────────
+Invoke-PyScript "RELIABILITY" (Join-Path $root "scripts\calc_reliability.py")
 
 # ── WIN_PROB ──────────────────────────────────────────────────────────────────
 Invoke-Step "WIN_PROB" (Join-Path $root "scripts\calc_win_prob.py")       $raceDates @("--max-debut", "999")
