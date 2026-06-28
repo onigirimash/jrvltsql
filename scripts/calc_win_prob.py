@@ -128,6 +128,7 @@ LEFT JOIN prev_kyaku pk ON pk.kettonum = TRIM(se.kettonum)
 WHERE se.year     = :year
   AND se.monthday = :monthday
   AND se.jyocd BETWEEN '01' AND '10'
+  AND se.umaban > 0
   AND (se.kakuteijyuni >= 1 OR COALESCE(se.ijyocd, '0') = '0')
   AND se.kettonum IS NOT NULL
   AND se.kettonum <> ''
@@ -277,6 +278,9 @@ def calc_one_day(
     if not rows:
         print(f"  {date_str}: 対象レースなし（スキップ）")
         return {'races': 0, 'skipped': 0, 'horses': 0, 'biased': 0}
+
+    # 既存レコードを削除してから再挿入（staleなumaban=0等を除去）
+    conn.run(_SQL_DELETE, year=year, monthday=monthday)
 
     # レース別グループ化
     races: dict[tuple, list] = defaultdict(list)
