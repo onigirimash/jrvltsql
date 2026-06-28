@@ -72,8 +72,10 @@ try {
 $today  = Get-Date
 $dowInt = [int]$today.DayOfWeek   # 0=Sun … 6=Sat
 
-# Sync range: today to +7 days (captures next weekend SE/RA data)
-$syncFrom = $today.ToString("yyyyMMdd")
+# Sync range: today-2 to +7 days
+# Starting 2 days back ensures Thursday-confirmed entries (datakubun=2) for the
+# upcoming Sunday are captured, even if JVLink published them after the Wednesday sync.
+$syncFrom = $today.AddDays(-2).ToString("yyyyMMdd")
 $syncTo   = $today.AddDays(7).ToString("yyyyMMdd")
 Write-Log "Sync range: $syncFrom - $syncTo"
 
